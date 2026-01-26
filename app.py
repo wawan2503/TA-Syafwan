@@ -120,11 +120,13 @@ def index():
         freq = FREQ_OPTIONS_GHZ[0]
 
     results: Optional[Results] = None
+    svg_results: Optional[Results] = None
     error: Optional[str] = None
 
     if request.method == "POST":
         try:
             results = compute_all(freq, mode=mode)
+            svg_results = results
         except Exception as e:
             error = f"Gagal menghitung: {e}"
 
@@ -135,6 +137,7 @@ def index():
         selected_freq=freq,
         mode=mode,
         results=results,
+        svg_results=svg_results,
         error=error,
     )
 

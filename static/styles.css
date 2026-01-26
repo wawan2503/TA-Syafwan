@@ -161,7 +161,8 @@ input[disabled]{ opacity: .8; cursor: not-allowed; }
   min-height: 320px;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
+  overflow-x: auto;
 }
 .viz-placeholder{
   color: var(--muted);
@@ -171,6 +172,8 @@ input[disabled]{ opacity: .8; cursor: not-allowed; }
 .antenna-svg{
   width: 100%;
   height: auto;
+  min-width: 560px;
+  max-width: 760px;
   color: rgba(231,238,252,.9);
 }
 /* .ground{ fill: rgba(141,214,255,.08); stroke: rgba(141,214,255,.35); stroke-width: 2; }
@@ -191,4 +194,8 @@ input[disabled]{ opacity: .8; cursor: not-allowed; }
 
 @media (max-width: 980px){
   .container{ grid-template-columns: 1fr; }
+}
+
+@media (min-width: 981px){
+  .viz{ justify-content: center; }
 }
