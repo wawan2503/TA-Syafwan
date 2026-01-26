@@ -1,75 +1,153 @@
-{# Simple SVG diagram using computed values as relative proportions #}
+{# SVG diagram matching the reference image from the assignment:
+   - Outer rectangle = substrate/groundplane
+   - Yellow metal (conductor) = patch + feed stem (T-shape)
+   - Labels only (no numbers): WP, LP, LG, WG, WF, LF
+#}
+
 {% set wg = results.wg_mm %}
 {% set lg = results.lg_mm %}
 {% set wp = results.wp_mm %}
 {% set lp = results.lp_mm %}
 {% set wf = results.wf_mm %}
 {% set lf = results.lf_mm %}
+{% set h_mm = 1.6 %}
 
-{# Normalize into a 520x360 canvas #}
-{% set canvas_w = 520 %}
-{% set canvas_h = 360 %}
-{% set margin = 40 %}
+{# Ensure the conductor (lp + lf) fits inside the outer board for drawing #}
+{% set lg_draw = lg if lg > (lp + lf + 6*h_mm) else (lp + lf + 6*h_mm) %}
 
-{# scale so ground fits nicely #}
-{% set scale_x = (canvas_w - 2*margin) / wg %}
-{% set scale_y = (canvas_h - 2*margin) / lg %}
-{% set s = scale_x if scale_x < scale_y else scale_y %}
+{# Canvas #}
+{% set canvas_w = 560 %}
+{% set canvas_h = 380 %}
+{% set pad = 44 %}
 
-{% set gx = (canvas_w - wg*s) / 2 %}
-{% set gy = (canvas_h - lg*s) / 2 %}
+{# Scale so the outer board fits canvas nicely #}
+{% set sx = (canvas_w - 2*pad) / wg %}
+{% set sy = (canvas_h - 2*pad) / lg_draw %}
+{% set s = sx if sx < sy else sy %}
 
-{% set px = gx + (wg - wp)*s/2 %}
-{% set py = gy + 20 %} {# patch near top #}
+{# Outer board #}
+{% set bx = (canvas_w - wg*s) / 2 %}
+{% set by = (canvas_h - lg_draw*s) / 2 %}
 
-{% set feed_x = gx + (wg - wf)*s/2 %}
-{% set feed_y = py + lp*s %}
-{% set feed_h = (gy + lg*s) - feed_y - 20 %} {# leave bottom padding #}
+{# Conductor placement inside board: margins ≈ 3h #}
+{% set m = 3*h_mm %}
+{% set top_gap = m %}
+{% set left_gap = (wg - wp)/2 %}
 
-<svg viewBox="0 0 {{canvas_w}} {{canvas_h}}" class="antenna-svg" role="img" aria-label="Antenna diagram">
+{# Patch rectangle (main) #}
+{% set px = bx + left_gap*s %}
+{% set py = by + top_gap*s %}
+{% set pw = wp*s %}
+{% set ph = lp*s %}
+
+{# Feed stem (centered) #}
+{% set fx = bx + (wg - wf)*s/2 %}
+{% set fy = py + ph %}
+{% set fw = wf*s %}
+{% set fh = lf*s %}
+
+{# Bottom gaps for WG segments #}
+{% set gap = (wg - wf)/2 %}
+
+<svg viewBox="0 0 {{canvas_w}} {{canvas_h}}" class="antenna-svg" role="img" aria-label="Antenna parameters diagram" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <marker id="arrow" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto">
-      <path d="M0,0 L7,3 L0,6 Z" fill="currentColor"></path>
+    <!-- background grid -->
+    <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
+      <path d="M 24 0 L 0 0 0 24" fill="none" class="grid-line"/>
+    </pattern>
+
+    <!-- arrows -->
+    <marker id="arrowEnd" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 Z" class="arrow-fill"></path>
     </marker>
-    <marker id="arrow2" markerWidth="10" markerHeight="10" refX="3" refY="3" orient="auto">
-      <path d="M7,0 L0,3 L7,6 Z" fill="currentColor"></path>
+    <marker id="arrowStart" markerWidth="10" markerHeight="10" refX="3" refY="3" orient="auto">
+      <path d="M7,0 L0,3 L7,6 Z" class="arrow-fill"></path>
     </marker>
+
+    <!-- Self-contained styling (robust for browsers & SVG renderers) -->
+    <style type="text/css"><![CDATA[
+      svg.antenna-svg .bg-fill { fill: #b0b8c0; fill-opacity: 0.35; }
+      svg.antenna-svg .grid-line{ stroke: #000000; stroke-opacity: 0.12; stroke-width: 1; }
+
+      svg.antenna-svg .substrate{
+        fill: #ffffff;
+        fill-opacity: 0.95;
+        stroke: #000000;
+        stroke-opacity: 0.65;
+        stroke-width: 2;
+      }
+      svg.antenna-svg .conductor{
+        fill: #ffeb00;
+        fill-opacity: 0.95;
+        stroke: #000000;
+        stroke-opacity: 0.45;
+        stroke-width: 2;
+      }
+
+      svg.antenna-svg .dim{
+        stroke: #000000;
+        stroke-opacity: 0.70;
+        stroke-width: 2;
+      }
+      svg.antenna-svg .dim-text{
+        font: 700 12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+        fill: #000000;
+        fill-opacity: 0.80;
+        letter-spacing: .3px;
+      }
+      svg.antenna-svg .arrow-fill{ fill: #000000; fill-opacity: 0.70; }
+    ]]></style>
   </defs>
 
-  <!-- Ground plane -->
-  <rect x="{{gx}}" y="{{gy}}" width="{{wg*s}}" height="{{lg*s}}" class="ground" rx="10" />
-  <text x="{{gx + 10}}" y="{{gy + 24}}" class="label">GROUND</text>
+  <!-- background -->
+  <rect x="0" y="0" width="{{canvas_w}}" height="{{canvas_h}}" class="bg-fill"/>
+  <rect x="0" y="0" width="{{canvas_w}}" height="{{canvas_h}}" fill="url(#grid)"/>
 
-  <!-- Patch -->
-  <rect x="{{px}}" y="{{py}}" width="{{wp*s}}" height="{{lp*s}}" class="patch" rx="6" />
-  <text x="{{px + 10}}" y="{{py + 24}}" class="label">PATCH</text>
+  <!-- Outer board -->
+  <rect x="{{bx}}" y="{{by}}" width="{{wg*s}}" height="{{lg_draw*s}}" class="substrate" />
 
-  <!-- Feedline -->
-  <rect x="{{feed_x}}" y="{{feed_y}}" width="{{wf*s}}" height="{{feed_h}}" class="feed" rx="4" />
-  <text x="{{feed_x + wf*s + 8}}" y="{{feed_y + 18}}" class="label">FEED</text>
+  <!-- Conductor: patch + stem -->
+  <rect x="{{px}}" y="{{py}}" width="{{pw}}" height="{{ph}}" class="conductor"/>
+  <rect x="{{fx}}" y="{{fy}}" width="{{fw}}" height="{{fh}}" class="conductor"/>
 
-  <!-- Dimension: WP -->
-  <line x1="{{px}}" y1="{{py - 14}}" x2="{{px + wp*s}}" y2="{{py - 14}}" class="dim" marker-start="url(#arrow2)" marker-end="url(#arrow)" />
-  <text x="{{px + (wp*s)/2}}" y="{{py - 20}}" class="dim-text" text-anchor="middle">WP ≈ {{ '%.2f'|format(wp) }} mm</text>
+  <!-- === Dimensions (match reference positions) === -->
 
-  <!-- Dimension: LP -->
-  <line x1="{{px - 14}}" y1="{{py}}" x2="{{px - 14}}" y2="{{py + lp*s}}" class="dim" marker-start="url(#arrow2)" marker-end="url(#arrow)" />
-  <text x="{{px - 18}}" y="{{py + (lp*s)/2}}" class="dim-text" text-anchor="end" dominant-baseline="middle">LP ≈ {{ '%.2f'|format(lp) }} mm</text>
+  <!-- WP (top, spans outer width) -->
+  <line x1="{{bx}}" y1="{{by - 18}}" x2="{{bx + wg*s}}" y2="{{by - 18}}"
+        class="dim" marker-start="url(#arrowStart)" marker-end="url(#arrowEnd)"/>
+  <text x="{{bx + (wg*s)/2}}" y="{{by - 24}}" class="dim-text" text-anchor="middle">WP</text>
 
-  <!-- Dimension: WG -->
-  <line x1="{{gx}}" y1="{{gy + lg*s + 14}}" x2="{{gx + wg*s}}" y2="{{gy + lg*s + 14}}" class="dim" marker-start="url(#arrow2)" marker-end="url(#arrow)" />
-  <text x="{{gx + (wg*s)/2}}" y="{{gy + lg*s + 32}}" class="dim-text" text-anchor="middle">WG ≈ {{ '%.2f'|format(wg) }} mm</text>
+  <!-- LG (right, spans outer height) -->
+  <line x1="{{bx + wg*s + 18}}" y1="{{by}}" x2="{{bx + wg*s + 18}}" y2="{{by + lg_draw*s}}"
+        class="dim" marker-start="url(#arrowStart)" marker-end="url(#arrowEnd)"/>
+  <text x="{{bx + wg*s + 24}}" y="{{by + (lg_draw*s)/2}}" class="dim-text" dominant-baseline="middle">LG</text>
 
-  <!-- Dimension: LG -->
-  <line x1="{{gx + wg*s + 14}}" y1="{{gy}}" x2="{{gx + wg*s + 14}}" y2="{{gy + lg*s}}" class="dim" marker-start="url(#arrow2)" marker-end="url(#arrow)" />
-  <text x="{{gx + wg*s + 18}}" y="{{gy + (lg*s)/2}}" class="dim-text" dominant-baseline="middle">LG ≈ {{ '%.2f'|format(lg) }} mm</text>
+  <!-- LP (left, spans patch main height) -->
+  <line x1="{{px - 18}}" y1="{{py}}" x2="{{px - 18}}" y2="{{py + ph}}"
+        class="dim" marker-start="url(#arrowStart)" marker-end="url(#arrowEnd)"/>
+  <text x="{{px - 24}}" y="{{py + ph/2}}" class="dim-text" text-anchor="end" dominant-baseline="middle">LP</text>
 
-  <!-- Dimension: WF -->
-  <line x1="{{feed_x}}" y1="{{feed_y + feed_h + 10}}" x2="{{feed_x + wf*s}}" y2="{{feed_y + feed_h + 10}}" class="dim" marker-start="url(#arrow2)" marker-end="url(#arrow)" />
-  <text x="{{feed_x + (wf*s)/2}}" y="{{feed_y + feed_h + 28}}" class="dim-text" text-anchor="middle">WF ≈ {{ '%.2f'|format(wf) }} mm</text>
+  <!-- LF (near stem, spans stem height) -->
+  <line x1="{{fx + fw + 18}}" y1="{{fy}}" x2="{{fx + fw + 18}}" y2="{{fy + fh}}"
+        class="dim" marker-start="url(#arrowStart)" marker-end="url(#arrowEnd)"/>
+  <text x="{{fx + fw + 24}}" y="{{fy + fh/2}}" class="dim-text" dominant-baseline="middle">LF</text>
 
-  <!-- Dimension: LF (shown as total feed rectangle height on diagram) -->
-  <line x1="{{feed_x + wf*s + 18}}" y1="{{feed_y}}" x2="{{feed_x + wf*s + 18}}" y2="{{feed_y + feed_h}}" class="dim" marker-start="url(#arrow2)" marker-end="url(#arrow)" />
-  <text x="{{feed_x + wf*s + 22}}" y="{{feed_y + feed_h/2}}" class="dim-text" dominant-baseline="middle">LF ≈ {{ '%.2f'|format(lf) }} mm</text>
+  <!-- Bottom segmented dimensions: WG | WF | WG -->
+  {% set yb = by + lg_draw*s + 20 %}
+
+  <!-- left WG -->
+  <line x1="{{bx}}" y1="{{yb}}" x2="{{bx + gap*s}}" y2="{{yb}}"
+        class="dim" marker-start="url(#arrowStart)" marker-end="url(#arrowEnd)"/>
+  <text x="{{bx + (gap*s)/2}}" y="{{yb + 18}}" class="dim-text" text-anchor="middle">WG</text>
+
+  <!-- WF -->
+  <line x1="{{bx + gap*s}}" y1="{{yb}}" x2="{{bx + (gap + wf)*s}}" y2="{{yb}}"
+        class="dim" marker-start="url(#arrowStart)" marker-end="url(#arrowEnd)"/>
+  <text x="{{bx + (gap*s) + (wf*s)/2}}" y="{{yb + 18}}" class="dim-text" text-anchor="middle">WF</text>
+
+  <!-- right WG -->
+  <line x1="{{bx + (gap + wf)*s}}" y1="{{yb}}" x2="{{bx + wg*s}}" y2="{{yb}}"
+        class="dim" marker-start="url(#arrowStart)" marker-end="url(#arrowEnd)"/>
+  <text x="{{bx + (gap + wf)*s + (gap*s)/2}}" y="{{yb + 18}}" class="dim-text" text-anchor="middle">WG</text>
 
 </svg>

@@ -173,13 +173,13 @@ input[disabled]{ opacity: .8; cursor: not-allowed; }
   height: auto;
   color: rgba(231,238,252,.9);
 }
-.ground{ fill: rgba(141,214,255,.08); stroke: rgba(141,214,255,.35); stroke-width: 2; }
+/* .ground{ fill: rgba(141,214,255,.08); stroke: rgba(141,214,255,.35); stroke-width: 2; }
 .patch{ fill: rgba(167,255,177,.10); stroke: rgba(167,255,177,.50); stroke-width: 2; }
 .feed{ fill: rgba(255,255,255,.05); stroke: rgba(255,255,255,.25); stroke-width: 2; }
 
 .label{ font-size: 12px; fill: rgba(231,238,252,.85); }
 .dim{ stroke: rgba(231,238,252,.75); stroke-width: 2; }
-.dim-text{ font-size: 12px; fill: rgba(231,238,252,.85); }
+.dim-text{ font-size: 12px; fill: rgba(231,238,252,.85); } */
 
 .footer{
   max-width: 1200px;
