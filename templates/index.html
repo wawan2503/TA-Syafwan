@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kalkulator Antena Mikrostrip (Flask)</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="brand-title">Kalkulator Antena Mikrostrip</div>
+        <div class="brand-subtitle">Rectangular patch + microstrip feed (tampilan sesuai tugas)</div>
+      </div>
+      <div class="pill">Flask</div>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="panel left">
+      <form method="post" class="card">
+        <div class="card-header">
+          <h2>Input</h2>
+          <p>Parameter tetap: h, Zo, εr, c (sesuai lembar tugas).</p>
+        </div>
+
+        <div class="grid">
+          <label class="field">
+            <span>Frekuensi (GHz)</span>
+            <select name="freq">
+              {% for f in freq_options %}
+                <option value="{{ f }}" {% if f == selected_freq %}selected{% endif %}>{{ f }}</option>
+              {% endfor %}
+            </select>
+          </label>
+
+          <label class="field">
+            <span>h (mm)</span>
+            <input value="{{ fixed.h_mm }}" disabled />
+          </label>
+
+          <label class="field">
+            <span>Zo (Ω)</span>
+            <input value="{{ fixed.z0 }}" disabled />
+          </label>
+
+          <label class="field">
+            <span>εr</span>
+            <input value="{{ fixed.er }}" disabled />
+          </label>
+
+          <label class="field">
+            <span>c (m/s)</span>
+            <input value="{{ '{:.0e}'.format(fixed.c) }}" disabled />
+          </label>
+
+          <div class="field">
+            <span>Mode rumus Wp</span>
+            <div class="radio-row">
+              <label class="radio">
+                <input type="radio" name="mode" value="module" {% if mode == 'module' %}checked{% endif %} />
+                <span>Modul (sesuai PDF)</span>
+              </label>
+              <label class="radio">
+                <input type="radio" name="mode" value="standard" {% if mode == 'standard' %}checked{% endif %} />
+                <span>Standar (umum)</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button class="btn" type="submit">Hitung</button>
+        </div>
+
+        {% if error %}
+          <div class="alert">{{ error }}</div>
+        {% endif %}
+
+        <div class="card-divider"></div>
+
+        <div class="card-header">
+          <h2>Output Spesifikasi</h2>
+          <p>Wp, Lp, Wg, Lg, Wf, Lf</p>
+        </div>
+
+        {% if results %}
+        <div class="table">
+          <div class="row"><div>Wp (mm)</div><div>{{ '%.2f'|format(results.wp_mm) }}</div></div>
+          <div class="row"><div>Lp (mm)</div><div>{{ '%.2f'|format(results.lp_mm) }}</div></div>
+          <div class="row"><div>Wg (mm)</div><div>{{ '%.2f'|format(results.wg_mm) }}</div></div>
+          <div class="row"><div>Lg (mm)</div><div>{{ '%.2f'|format(results.lg_mm) }}</div></div>
+          <div class="row"><div>Wf (mm)</div><div>{{ '%.2f'|format(results.wf_mm) }}</div></div>
+          <div class="row"><div>Lf (mm)</div><div>{{ '%.2f'|format(results.lf_mm) }}</div></div>
+          <div class="row subtle"><div>εeff (patch)</div><div>{{ '%.4f'|format(results.eps_eff_patch) }}</div></div>
+          <div class="row subtle"><div>εeff (feedline)</div><div>{{ '%.4f'|format(results.eps_eff_line) }}</div></div>
+        </div>
+        {% else %}
+          <div class="muted">Klik <b>Hitung</b> untuk menampilkan hasil.</div>
+        {% endif %}
+
+        <div class="card-divider"></div>
+
+        <div class="card-header">
+          <h2>Catatan Hasil Simulator</h2>
+          <p>Opsional: isi manual hasil dari AWR / CST.</p>
+        </div>
+
+        <div class="grid">
+          <label class="field">
+            <span>Hasil Simulator AWR</span>
+            <textarea placeholder="Contoh: S11 min, bandwidth, VSWR, gain..."></textarea>
+          </label>
+          <label class="field">
+            <span>Hasil Simulator CST</span>
+            <textarea placeholder="Contoh: S11 min, bandwidth, VSWR, gain..."></textarea>
+          </label>
+        </div>
+
+      </form>
+    </section>
+
+    <section class="panel right">
+      <div class="card">
+        <div class="card-header">
+          <h2>Visualisasi Antena</h2>
+          <p>Gambar skematik (tidak skala absolut), menampilkan parameter WP, LP, WG, LG, WF, LF.</p>
+        </div>
+
+        <div class="viz">
+          {% if results %}
+            {% include "_antenna.svg" %}
+          {% else %}
+            <div class="viz-placeholder">Hasil perhitungan akan muncul di sini.</div>
+          {% endif %}
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    Dibuat dengan Flask • UI mengikuti contoh pada lembar tugas
+  </footer>
+</body>
+</html>
