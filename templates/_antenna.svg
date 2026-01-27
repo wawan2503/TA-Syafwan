@@ -5,6 +5,7 @@
 {% set wf = results.wf_mm %}
 {% set lf = results.lf_mm %}
 {% set h_mm = 1.6 %}
+{% set labels_on = show_labels if show_labels is defined else True %}
 
 {# nilai bawah (WG kiri/kanan pada gambar referensi) #}
 {% set wg_side = (wg - wf)/2 %}
@@ -118,6 +119,7 @@
   <rect x="{{px}}" y="{{py}}" width="{{pw}}" height="{{ph}}" class="conductor"/>
   <rect x="{{fx}}" y="{{fy}}" width="{{fw_draw}}" height="{{fh}}" class="conductor"/>
 
+  {% if labels_on %}
   <!-- === Dimension lines + TEXT WITH VALUES === -->
 
   <!-- WP (top, spans outer width) -->
@@ -173,6 +175,8 @@
   <text x="{{bx + gap_draw + fw_draw + gap_draw/2}}" y="{{yb + 18}}" class="dim-text-sm" text-anchor="middle">
     WG = {{ '%.2f' % wg_side }} mm
   </text>
+
+  {% endif %}
 
 </svg>
   

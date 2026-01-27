@@ -26,6 +26,4 @@ Buka:
 http://127.0.0.1:5000
 
 ## Catatan
-- "Mode rumus Wp": ada 2 pilihan:
-  - Modul (sesuai PDF)
-  - Standar (umum)
+- Rumus Wp yang digunakan: standar (sqrt(2/(er+1)))

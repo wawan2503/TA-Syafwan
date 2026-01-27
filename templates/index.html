@@ -111,12 +111,12 @@
       <div class="card">
         <div class="card-header">
           <h2>Visualisasi Antena</h2>
-          <p>Gambar tampil setelah tombol <b>Hitung</b>.</p>
+          <p>Gambar langsung tampil, angka dimensi muncul setelah tombol <b>Hitung</b>.</p>
         </div>
 
         <div class="viz">
           {% if svg_results %}
-            {% with results=svg_results %}
+            {% with results=svg_results, show_labels=show_svg_labels %}
               {% include "_antenna.svg" %}
             {% endwith %}
           {% else %}
@@ -132,3 +132,6 @@
   </footer>
 </body>
 </html>
+
+
+

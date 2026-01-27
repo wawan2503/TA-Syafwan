@@ -8,12 +8,15 @@ from flask import Flask, render_template, request
 
 app = Flask(__name__)
 
-# === Fixed parameters from the assignment sheet ===
+# ===== Default / fixed (kamu boleh ubah kalau mau dinamis) =====
 FREQ_OPTIONS_GHZ = [1.8, 2.1, 2.3, 2.4, 3.3]
-H_MM = 1.6            # substrate thickness (mm)
-Z0_OHM = 50.0         # input impedance (ohm)
-ER = 4.4              # dielectric constant
-C = 3e8               # speed of light (m/s)
+
+C = 3e8          # m/s
+ER = 4.4         # FR-4 (umum)
+H_MM = 1.6       # mm
+Z0_OHM = 50.0    # ohm
+
+PATCH_WIDTH_SCALE = 2.0  # scale patch width (visual requirement)
 
 
 @dataclass
@@ -29,69 +32,141 @@ class Results:
     eps_eff_line: float
 
 
-def _eps_eff(er: float, h_m: float, w_m: float) -> float:
-    """Effective dielectric constant (Hammerstad-style simple form)."""
-    if w_m <= 0:
+# =========================
+# Rumus umum microstrip
+# =========================
+
+def eps_eff_hammerstad(er: float, w_h: float) -> float:
+    """
+    Effective permittivity microstrip (Hammerstad-Jensen approximation).
+    w_h = W/h
+    """
+    if w_h <= 0:
         return float("nan")
-    return (er + 1) / 2 + (er - 1) / 2 * (1 / math.sqrt(1 + 12 * h_m / w_m))
+
+    # base term
+    ee = (er + 1) / 2 + (er - 1) / 2 * (1 / math.sqrt(1 + 12 / w_h))
+
+    # correction for narrow lines (w_h < 1)
+    if w_h < 1:
+        ee += 0.04 * (1 - w_h) ** 2
+
+    return ee
 
 
-def patch_dimensions(freq_hz: float, er: float, h_m: float, mode: str = "module") -> tuple[float, float, float]:
+def microstrip_z0(er: float, w_h: float) -> float:
     """
-    Returns (Wp, Lp, eps_eff_patch) in meters.
-
-    mode:
-      - "module": uses the Wp formula as written in the PDF (sqrt((er+1)/2))
-      - "standard": uses the common textbook formula (sqrt(2/(er+1)))
+    Characteristic impedance Z0 for microstrip line (common closed-form).
+    Uses eps_eff_hammerstad(er, w_h).
     """
-    if mode == "module":
-        wp = (C / (2 * freq_hz)) * math.sqrt((er + 1) / 2)
+    ee = eps_eff_hammerstad(er, w_h)
+    if w_h <= 0 or math.isnan(ee) or ee <= 0:
+        return float("nan")
+
+    if w_h <= 1:
+        # narrow line
+        return (60 / math.sqrt(ee)) * math.log(8 / w_h + 0.25 * w_h)
     else:
-        wp = (C / (2 * freq_hz)) * math.sqrt(2 / (er + 1))
-
-    eps_eff = _eps_eff(er, h_m, wp)
-    delta_l = 0.412 * h_m * ((eps_eff + 0.3) * (wp / h_m + 0.264)) / ((eps_eff - 0.258) * (wp / h_m + 0.8))
-    leff = C / (2 * freq_hz * math.sqrt(eps_eff))
-    lp = leff - 2 * delta_l
-    return wp, lp, eps_eff
+        # wide line
+        return (120 * math.pi) / (math.sqrt(ee) * (w_h + 1.393 + 0.667 * math.log(w_h + 1.444)))
 
 
-def microstrip_width_for_z0(z0: float, er: float, h_m: float) -> tuple[float, float]:
+def solve_w_h_for_z0(er: float, z0: float, tol: float = 1e-6, max_iter: int = 120) -> float:
     """
-    Returns (W, eps_eff_line) in meters for a microstrip line with characteristic impedance z0.
-    Uses the B-formula shown in the PDF (and the usual A-case for W/h <= 2).
+    Solve W/h given target Z0 (ohm) using bisection.
     """
-    A = z0 / 60 * math.sqrt((er + 1) / 2) + ((er - 1) / (er + 1)) * (0.23 + 0.11 / er)
-    wh = (8 * math.exp(A)) / (math.exp(2 * A) - 2)
+    # bounds for W/h (very small to very large)
+    lo = 1e-6
+    hi = 100.0
 
-    if wh > 2:
-        B = 377 * math.pi / (2 * z0 * math.sqrt(er))
-        wh = (2 / math.pi) * (
-            B - 1 - math.log(2 * B - 1)
-            + ((er - 1) / (2 * er)) * (math.log(B - 1) + 0.39 - 0.61 / er)
-        )
+    # ensure function crosses target (Z0 decreases as W/h increases generally)
+    z_lo = microstrip_z0(er, lo)
+    z_hi = microstrip_z0(er, hi)
 
-    w = wh * h_m
-    eps_eff_line = _eps_eff(er, h_m, w)
-    return w, eps_eff_line
+    # If bounds are weird, expand hi
+    expand = 0
+    while (math.isnan(z_lo) or math.isnan(z_hi) or z_lo < z0 or z_hi > z0) and expand < 20:
+        # We want z_lo > z0 and z_hi < z0 ideally
+        hi *= 2
+        z_hi = microstrip_z0(er, hi)
+        expand += 1
+
+    # Bisection
+    for _ in range(max_iter):
+        mid = (lo + hi) / 2
+        z_mid = microstrip_z0(er, mid)
+
+        if math.isnan(z_mid):
+            # move a bit
+            lo = mid
+            continue
+
+        if abs(z_mid - z0) < 1e-6:
+            return mid
+
+        # Z0 decreases as w_h increases
+        if z_mid > z0:
+            lo = mid
+        else:
+            hi = mid
+
+        if (hi - lo) < tol:
+            break
+
+    return (lo + hi) / 2
 
 
-def compute_all(freq_ghz: float, mode: str = "module") -> Results:
-    freq_hz = freq_ghz * 1e9
+# =========================
+# Rumus umum patch antenna
+# =========================
+
+def patch_width(c: float, f_hz: float, er: float) -> float:
+    """
+    Patch width (rectangular) - formula umum:
+      W = c / (2 f) * sqrt(2/(er + 1))
+    """
+    return (c / (2 * f_hz)) * math.sqrt(2 / (er + 1))
+
+
+def patch_length(c: float, f_hz: float, er: float, h_m: float, w_m: float) -> tuple[float, float]:
+    """
+    Patch length (rectangular) - formula umum:
+      eps_eff = (er+1)/2 + (er-1)/2 * 1/sqrt(1 + 12h/W)
+      ΔL/h = 0.412 * ((eps_eff+0.3)(W/h+0.264))/((eps_eff-0.258)(W/h+0.8))
+      Leff = c/(2f*sqrt(eps_eff))
+      L = Leff - 2ΔL
+    returns (L, eps_eff)
+    """
+    w_h = w_m / h_m
+    eps_eff = (er + 1) / 2 + (er - 1) / 2 * (1 / math.sqrt(1 + 12 / w_h))
+
+    delta_l = 0.412 * h_m * ((eps_eff + 0.3) * (w_h + 0.264)) / ((eps_eff - 0.258) * (w_h + 0.8))
+    leff = c / (2 * f_hz * math.sqrt(eps_eff))
+    L = leff - 2 * delta_l
+
+    return L, eps_eff
+
+
+def compute_all(freq_ghz: float) -> Results:
+    f_hz = freq_ghz * 1e9
     h_m = H_MM * 1e-3
 
-    wp_m, lp_m, eps_eff_patch = patch_dimensions(freq_hz, ER, h_m, mode=mode)
+    # --- Patch W & L (rumus umum) ---
+    wp_m = patch_width(C, f_hz, ER) * PATCH_WIDTH_SCALE
+    lp_m, eps_patch = patch_length(C, f_hz, ER, h_m, wp_m)
 
-    # Ground plane
-    wg_m = 6 * h_m + wp_m
-    lg_m = 6 * h_m + lp_m
+    # --- Ground plane (umum: tambah 3h tiap sisi => +6h total) ---
+    wg_m = wp_m + 6 * h_m
+    lg_m = lp_m + 6 * h_m
 
-    # Feed line width (50 ohm microstrip)
-    wf_m, eps_eff_line = microstrip_width_for_z0(Z0_OHM, ER, h_m)
+    # --- Feedline width Wf for Z0 (rumus umum microstrip) ---
+    w_h_line = solve_w_h_for_z0(ER, Z0_OHM)
+    wf_m = w_h_line * h_m
+    eps_line = eps_eff_hammerstad(ER, w_h_line)
 
-    # Feed line length (quarter guided wavelength)
-    lambda_g = C / (freq_hz * math.sqrt(eps_eff_line))
-    lf_m = lambda_g / 4
+    # --- Feedline length: quarter guided wavelength ---
+    lambda_g = C / (f_hz * math.sqrt(eps_line))
+    lf_m = 0.25 * lambda_g
 
     to_mm = 1e3
     return Results(
@@ -102,42 +177,39 @@ def compute_all(freq_ghz: float, mode: str = "module") -> Results:
         lg_mm=lg_m * to_mm,
         wf_mm=wf_m * to_mm,
         lf_mm=lf_m * to_mm,
-        eps_eff_patch=eps_eff_patch,
-        eps_eff_line=eps_eff_line,
+        eps_eff_patch=eps_patch,
+        eps_eff_line=eps_line,
     )
 
 
 @app.route("/", methods=["GET", "POST"])
 def index():
-    selected_freq = request.form.get("freq", str(FREQ_OPTIONS_GHZ[0]))
-    mode = request.form.get("mode", "module")  # module | standard
-
-    try:
-        freq = float(selected_freq)
-        if freq not in FREQ_OPTIONS_GHZ:
-            freq = FREQ_OPTIONS_GHZ[0]
-    except ValueError:
-        freq = FREQ_OPTIONS_GHZ[0]
-
     results: Optional[Results] = None
-    svg_results: Optional[Results] = None
     error: Optional[str] = None
+
+    selected_freq = FREQ_OPTIONS_GHZ[0]
 
     if request.method == "POST":
         try:
-            results = compute_all(freq, mode=mode)
-            svg_results = results
+            selected_freq = float(request.form.get("freq", str(FREQ_OPTIONS_GHZ[0])))
+            if selected_freq not in FREQ_OPTIONS_GHZ:
+                selected_freq = FREQ_OPTIONS_GHZ[0]
+            results = compute_all(selected_freq)
         except Exception as e:
             error = f"Gagal menghitung: {e}"
+
+    safe_freq = selected_freq if selected_freq in FREQ_OPTIONS_GHZ else FREQ_OPTIONS_GHZ[0]
+    svg_results = results if results is not None else compute_all(safe_freq)
+    show_svg_labels = results is not None
 
     return render_template(
         "index.html",
         freq_options=FREQ_OPTIONS_GHZ,
         fixed=dict(h_mm=H_MM, z0=Z0_OHM, er=ER, c=C),
-        selected_freq=freq,
-        mode=mode,
+        selected_freq=selected_freq,
         results=results,
         svg_results=svg_results,
+        show_svg_labels=show_svg_labels,
         error=error,
     )
 
