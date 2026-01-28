@@ -7,7 +7,7 @@
 {% set h_mm = 1.6 %}
 {% set labels_on = show_labels if show_labels is defined else True %}
 
-{# nilai bawah (WG kiri/kanan pada gambar referensi) #}
+{# nilai bawah: sisa ground di kiri/kanan feedline (bukan Wg total) #}
 {% set wg_side = (wg - wf)/2 %}
 
 {# Pastikan (lp+lf) muat di board saat digambar #}
@@ -122,11 +122,18 @@
   {% if labels_on %}
   <!-- === Dimension lines + TEXT WITH VALUES === -->
 
-  <!-- WP (top, spans outer width) -->
+  <!-- Wg (board width) -->
   <line x1="{{bx}}" y1="{{by - 18}}" x2="{{bx + wg*s}}" y2="{{by - 18}}"
         class="dim" marker-start="url(#arrowStart)" marker-end="url(#arrowEnd)"/>
   <text x="{{bx + (wg*s)/2}}" y="{{by - 24}}" class="dim-text" text-anchor="middle">
-    WP = {{ '%.2f' % wg }} mm
+    Wg = {{ '%.2f' % wg }} mm
+  </text>
+
+  <!-- Wp (patch width) -->
+  <line x1="{{px}}" y1="{{py - 14}}" x2="{{px + pw}}" y2="{{py - 14}}"
+        class="dim" marker-start="url(#arrowStart)" marker-end="url(#arrowEnd)"/>
+  <text x="{{px + (pw)/2}}" y="{{py - 20}}" class="dim-text-sm" text-anchor="middle">
+    Wp = {{ '%.2f' % wp }} mm
   </text>
 
   <!-- LG (right, spans outer height) -->
@@ -155,11 +162,11 @@
   <!-- Bottom segmented: WG | WF | WG -->
   {% set yb = by + lg_draw*s + 20 %}
 
-  <!-- left WG -->
+  <!-- left remaining ground: (Wg - Wf)/2 -->
   <line x1="{{bx}}" y1="{{yb}}" x2="{{bx + gap_draw}}" y2="{{yb}}"
         class="dim" marker-start="url(#arrowStart)" marker-end="url(#arrowEnd)"/>
   <text x="{{bx + gap_draw/2}}" y="{{yb + 18}}" class="dim-text-sm" text-anchor="middle">
-    WG = {{ '%.2f' % wg_side }} mm
+    (Wg-Wf)/2 = {{ '%.2f' % wg_side }} mm
   </text>
 
   <!-- WF (use actual value, but visual width is fw_draw) -->
@@ -169,11 +176,11 @@
     WF = {{ '%.2f' % wf }} mm
   </text>
 
-  <!-- right WG -->
+  <!-- right remaining ground: (Wg - Wf)/2 -->
   <line x1="{{bx + gap_draw + fw_draw}}" y1="{{yb}}" x2="{{bx + wg*s}}" y2="{{yb}}"
         class="dim" marker-start="url(#arrowStart)" marker-end="url(#arrowEnd)"/>
   <text x="{{bx + gap_draw + fw_draw + gap_draw/2}}" y="{{yb + 18}}" class="dim-text-sm" text-anchor="middle">
-    WG = {{ '%.2f' % wg_side }} mm
+    (Wg-Wf)/2 = {{ '%.2f' % wg_side }} mm
   </text>
 
   {% endif %}

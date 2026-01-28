@@ -16,8 +16,6 @@ ER = 4.4         # FR-4 (umum)
 H_MM = 1.6       # mm
 Z0_OHM = 50.0    # ohm
 
-PATCH_WIDTH_SCALE = 2.0  # scale patch width (visual requirement)
-
 
 @dataclass
 class Results:
@@ -69,6 +67,30 @@ def microstrip_z0(er: float, w_h: float) -> float:
     else:
         # wide line
         return (120 * math.pi) / (math.sqrt(ee) * (w_h + 1.393 + 0.667 * math.log(w_h + 1.444)))
+
+
+def microstrip_w_h_for_z0(er: float, z0: float) -> float:
+    """
+    Closed-form approximation for W/h given target Z0 (ohm).
+
+    Commonly used design equations for microstrip lines (often attributed to
+    Hammerstad/Jensen; see also many patch-antenna design papers that reuse the same form).
+    """
+    if er <= 0 or z0 <= 0:
+        return float("nan")
+
+    a = (z0 / 60) * math.sqrt((er + 1) / 2) + ((er - 1) / (er + 1)) * (0.23 + 0.11 / er)
+    w_h = (8 * math.exp(a)) / (math.exp(2 * a) - 2)
+    if w_h <= 2:
+        return w_h
+
+    b = (377 * math.pi) / (2 * z0 * math.sqrt(er))
+    return (2 / math.pi) * (
+        b
+        - 1
+        - math.log(2 * b - 1)
+        + ((er - 1) / (2 * er)) * (math.log(b - 1) + 0.39 - 0.61 / er)
+    )
 
 
 def solve_w_h_for_z0(er: float, z0: float, tol: float = 1e-6, max_iter: int = 120) -> float:
@@ -138,7 +160,7 @@ def patch_length(c: float, f_hz: float, er: float, h_m: float, w_m: float) -> tu
     returns (L, eps_eff)
     """
     w_h = w_m / h_m
-    eps_eff = (er + 1) / 2 + (er - 1) / 2 * (1 / math.sqrt(1 + 12 / w_h))
+    eps_eff = eps_eff_hammerstad(er, w_h)
 
     delta_l = 0.412 * h_m * ((eps_eff + 0.3) * (w_h + 0.264)) / ((eps_eff - 0.258) * (w_h + 0.8))
     leff = c / (2 * f_hz * math.sqrt(eps_eff))
@@ -152,21 +174,26 @@ def compute_all(freq_ghz: float) -> Results:
     h_m = H_MM * 1e-3
 
     # --- Patch W & L (rumus umum) ---
-    wp_m = patch_width(C, f_hz, ER) * PATCH_WIDTH_SCALE
+    wp_m = patch_width(C, f_hz, ER)
     lp_m, eps_patch = patch_length(C, f_hz, ER, h_m, wp_m)
 
-    # --- Ground plane (umum: tambah 3h tiap sisi => +6h total) ---
-    wg_m = wp_m + 6 * h_m
-    lg_m = lp_m + 6 * h_m
-
     # --- Feedline width Wf for Z0 (rumus umum microstrip) ---
-    w_h_line = solve_w_h_for_z0(ER, Z0_OHM)
+    # Prefer closed-form W/h approximation; fall back to numeric solve if needed.
+    w_h_line = microstrip_w_h_for_z0(ER, Z0_OHM)
+    if math.isnan(w_h_line) or w_h_line <= 0:
+        w_h_line = solve_w_h_for_z0(ER, Z0_OHM)
     wf_m = w_h_line * h_m
     eps_line = eps_eff_hammerstad(ER, w_h_line)
 
     # --- Feedline length: quarter guided wavelength ---
     lambda_g = C / (f_hz * math.sqrt(eps_line))
     lf_m = 0.25 * lambda_g
+
+    # --- Ground plane/substrate sizing (layout on this app shows patch + feedline) ---
+    # Rule-of-thumb: add ~3h margin per side (=> +6h total). For this layout,
+    # the length must also accommodate the feedline segment.
+    wg_m = wp_m + 6 * h_m
+    lg_m = lp_m + lf_m + 6 * h_m
 
     to_mm = 1e3
     return Results(
