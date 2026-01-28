@@ -119,44 +119,47 @@
   <rect x="{{px}}" y="{{py}}" width="{{pw}}" height="{{ph}}" class="conductor"/>
   <rect x="{{fx}}" y="{{fy}}" width="{{fw_draw}}" height="{{fh}}" class="conductor"/>
 
-  {% if labels_on %}
-  <!-- === Dimension lines + TEXT WITH VALUES === -->
+  <!-- === Dimension lines + TEXT (placeholder before Hitung) === -->
 
   <!-- Wg (board width) -->
   <line x1="{{bx}}" y1="{{by - 18}}" x2="{{bx + wg*s}}" y2="{{by - 18}}"
         class="dim" marker-start="url(#arrowStart)" marker-end="url(#arrowEnd)"/>
   <text x="{{bx + (wg*s)/2}}" y="{{by - 24}}" class="dim-text" text-anchor="middle">
-    Wg = {{ '%.2f' % wg }} mm
+    {% if labels_on %}Wg = {{ '%.2f' % wg }} mm{% else %}Wg{% endif %}
   </text>
 
   <!-- Wp (patch width) -->
   <line x1="{{px}}" y1="{{py - 14}}" x2="{{px + pw}}" y2="{{py - 14}}"
         class="dim" marker-start="url(#arrowStart)" marker-end="url(#arrowEnd)"/>
   <text x="{{px + (pw)/2}}" y="{{py - 20}}" class="dim-text-sm" text-anchor="middle">
-    Wp = {{ '%.2f' % wp }} mm
+    {% if labels_on %}Wp = {{ '%.2f' % wp }} mm{% else %}Wp{% endif %}
   </text>
 
   <!-- LG (right, spans outer height) -->
   <line x1="{{bx + wg*s + 18}}" y1="{{by}}" x2="{{bx + wg*s + 18}}" y2="{{by + lg_draw*s}}"
         class="dim" marker-start="url(#arrowStart)" marker-end="url(#arrowEnd)"/>
   <text x="{{bx + wg*s - 6}}" y="{{by + (lg_draw*s)/2 - 6}}" class="dim-text" text-anchor="middle">
-    <tspan x="{{bx + wg*s - 6}}" dy="0">LG</tspan>
+    <tspan x="{{bx + wg*s - 6}}" dy="0">Lg</tspan>
+    {% if labels_on %}
     <tspan x="{{bx + wg*s - 6}}" dy="14">{{ '%.2f' % lg }} mm</tspan>
+    {% endif %}
   </text>
 
   <!-- LP (left, spans patch height) -->
   <line x1="{{px - 26}}" y1="{{py}}" x2="{{px - 26}}" y2="{{py + ph}}"
         class="dim" marker-start="url(#arrowStart)" marker-end="url(#arrowEnd)"/>
   <text x="{{px - 13}}" y="{{py + ph/2 - 6}}" class="dim-text" text-anchor="middle">
-    <tspan x="{{px - 13}}" dy="0">LP</tspan>
+    <tspan x="{{px - 13}}" dy="0">Lp</tspan>
+    {% if labels_on %}
     <tspan x="{{px - 13}}" dy="14">{{ '%.2f' % lp }} mm</tspan>
+    {% endif %}
   </text>
 
   <!-- LF (near stem, spans stem height) -->
   <line x1="{{fx + fw_draw + 18}}" y1="{{fy}}" x2="{{fx + fw_draw + 18}}" y2="{{fy + fh}}"
         class="dim" marker-start="url(#arrowStart)" marker-end="url(#arrowEnd)"/>
   <text x="{{fx + fw_draw + 24}}" y="{{fy + fh/2}}" class="dim-text" dominant-baseline="middle">
-    LF = {{ '%.2f' % lf }} mm
+    {% if labels_on %}Lf = {{ '%.2f' % lf }} mm{% else %}Lf{% endif %}
   </text>
 
   <!-- Bottom segmented: WG | WF | WG -->
@@ -166,24 +169,22 @@
   <line x1="{{bx}}" y1="{{yb}}" x2="{{bx + gap_draw}}" y2="{{yb}}"
         class="dim" marker-start="url(#arrowStart)" marker-end="url(#arrowEnd)"/>
   <text x="{{bx + gap_draw/2}}" y="{{yb + 18}}" class="dim-text-sm" text-anchor="middle">
-    (Wg-Wf)/2 = {{ '%.2f' % wg_side }} mm
+    {% if labels_on %}(Wg-Wf)/2 = {{ '%.2f' % wg_side }} mm{% else %}(Wg-Wf)/2{% endif %}
   </text>
 
   <!-- WF (use actual value, but visual width is fw_draw) -->
   <line x1="{{bx + gap_draw}}" y1="{{yb}}" x2="{{bx + gap_draw + fw_draw}}" y2="{{yb}}"
         class="dim" marker-start="url(#arrowStart)" marker-end="url(#arrowEnd)"/>
   <text x="{{bx + gap_draw + fw_draw/2}}" y="{{yb - 8}}" class="dim-text-sm" text-anchor="middle">
-    WF = {{ '%.2f' % wf }} mm
+    {% if labels_on %}Wf = {{ '%.2f' % wf }} mm{% else %}Wf{% endif %}
   </text>
 
   <!-- right remaining ground: (Wg - Wf)/2 -->
   <line x1="{{bx + gap_draw + fw_draw}}" y1="{{yb}}" x2="{{bx + wg*s}}" y2="{{yb}}"
         class="dim" marker-start="url(#arrowStart)" marker-end="url(#arrowEnd)"/>
   <text x="{{bx + gap_draw + fw_draw + gap_draw/2}}" y="{{yb + 18}}" class="dim-text-sm" text-anchor="middle">
-    (Wg-Wf)/2 = {{ '%.2f' % wg_side }} mm
+    {% if labels_on %}(Wg-Wf)/2 = {{ '%.2f' % wg_side }} mm{% else %}(Wg-Wf)/2{% endif %}
   </text>
-
-  {% endif %}
 
 </svg>
   

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kalkulator Antena Mikrostrip</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div>
+        <div class="brand-title">Kalkulator Antena Mikrostrip</div>
+        <div class="brand-subtitle">Landing page • Flask</div>
+      </div>
+      <div class="topbar-actions">
+        <a class="pill pill-link" href="{{ url_for('calculator') }}">Mulai Hitung</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="container-landing">
+    <section class="landing-grid">
+      <div class="card hero">
+        <div class="hero-badge">Rectangular microstrip patch • FR-4</div>
+        <h1 class="hero-title">Hitung dimensi Wp, Lp, Wg, Lg, Wf, Lf</h1>
+        <p class="hero-desc">
+          Pilih frekuensi, lalu klik <b>Hitung</b> untuk menampilkan nilai di tabel dan pada gambar.
+          Saat belum dihitung, gambar hanya menampilkan label (Wp/Lp/Wg/Lg/Wf/Lf).
+        </p>
+
+        <form class="hero-actions" method="get" action="{{ url_for('calculator') }}">
+          <label class="field">
+            <span>Frekuensi (GHz)</span>
+            <select name="freq">
+              {% for f in freq_options %}
+                <option value="{{ f }}" {% if f == selected_freq %}selected{% endif %}>{{ f }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <button class="btn" type="submit">Buka Kalkulator</button>
+        </form>
+
+        <div class="kpi-grid">
+          <div class="kpi">
+            <div class="kpi-k">h</div>
+            <div class="kpi-v">{{ fixed.h_mm }} mm</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-k">Zo</div>
+            <div class="kpi-v">{{ fixed.z0 }} Ω</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-k">εr</div>
+            <div class="kpi-v">{{ fixed.er }}</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-k">c</div>
+            <div class="kpi-v">{{ '{:.0e}'.format(fixed.c) }} m/s</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2>Preview Visual</h2>
+          <p>Label dimensi terlihat sejak awal.</p>
+        </div>
+        <div class="viz">
+          {% with results=svg_results, show_labels=false %}
+            {% include "_antenna.svg" %}
+          {% endwith %}
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    Flask • Tampilan sesuai tugas
+  </footer>
+</body>
+</html>
+

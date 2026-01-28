@@ -25,6 +25,9 @@ python app.py
 Buka:
 http://127.0.0.1:5000
 
+Kalkulator langsung:
+http://127.0.0.1:5000/calculator
+
 ## Catatan
 - Rumus mengikuti pendekatan umum rectangular microstrip patch (transmission-line model) + microstrip line (closed-form).
 - Ukuran ground/substrate di app ini mencakup segmen feedline (layout pada gambar), jadi: `Lg = Lp + Lf + 6h`.

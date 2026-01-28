@@ -209,8 +209,30 @@ def compute_all(freq_ghz: float) -> Results:
     )
 
 
-@app.route("/", methods=["GET", "POST"])
-def index():
+@app.route("/", methods=["GET"])
+def landing():
+    selected_freq = FREQ_OPTIONS_GHZ[0]
+    try:
+        q = request.args.get("freq")
+        if q is not None:
+            selected_freq = float(q)
+    except Exception:
+        selected_freq = FREQ_OPTIONS_GHZ[0]
+
+    safe_freq = selected_freq if selected_freq in FREQ_OPTIONS_GHZ else FREQ_OPTIONS_GHZ[0]
+    svg_results = compute_all(safe_freq)
+
+    return render_template(
+        "landing.html",
+        freq_options=FREQ_OPTIONS_GHZ,
+        fixed=dict(h_mm=H_MM, z0=Z0_OHM, er=ER, c=C),
+        selected_freq=safe_freq,
+        svg_results=svg_results,
+    )
+
+
+@app.route("/calculator", methods=["GET", "POST"])
+def calculator():
     results: Optional[Results] = None
     error: Optional[str] = None
 
@@ -224,6 +246,13 @@ def index():
             results = compute_all(selected_freq)
         except Exception as e:
             error = f"Gagal menghitung: {e}"
+    else:
+        try:
+            q = request.args.get("freq")
+            if q is not None:
+                selected_freq = float(q)
+        except Exception:
+            selected_freq = FREQ_OPTIONS_GHZ[0]
 
     safe_freq = selected_freq if selected_freq in FREQ_OPTIONS_GHZ else FREQ_OPTIONS_GHZ[0]
     svg_results = results if results is not None else compute_all(safe_freq)

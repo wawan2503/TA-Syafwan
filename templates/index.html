@@ -13,13 +13,16 @@
         <div class="brand-title">Kalkulator Antena Mikrostrip</div>
         <div class="brand-subtitle">Tampilan mengikuti tugas (Flask)</div>
       </div>
+      <div class="topbar-actions">
+        <a class="pill pill-link" href="{{ url_for('landing') }}">Home</a>
+      </div>
     </div>
   </header>
 
   <main class="container">
     <!-- LEFT -->
     <section class="panel left">
-      <form method="post" class="card">
+      <form method="post" action="{{ url_for('calculator') }}" class="card">
         <div class="card-header">
           <h2>Input</h2>
           <p>Parameter tetap sesuai tugas: h, Zo, εr, c</p>
@@ -111,7 +114,7 @@
       <div class="card">
         <div class="card-header">
           <h2>Visualisasi Antena</h2>
-          <p>Gambar langsung tampil, angka dimensi muncul setelah tombol <b>Hitung</b>.</p>
+          <p>Gambar langsung tampil, label dimensi (Wp, Lp, Wg, Lg, Wf, Lf) terlihat. Nilai dimensi muncul setelah tombol <b>Hitung</b>.</p>
         </div>
 
         <div class="viz">
