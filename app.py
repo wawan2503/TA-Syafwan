@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
+import pandas as pd
 from flask import Flask, render_template, request
 
 app = Flask(__name__)
@@ -17,6 +19,110 @@ H_MM = 1.6       # mm
 Z0_OHM = 50.0    # ohm
 
 PATCH_WIDTH_SCALE = 2.0  # scale patch width (visual requirement)
+
+RETURN_LOSS_FILE = Path(__file__).with_name("return loss.xlsx")
+
+
+def format_freq_key(value: float | str) -> str:
+    """Normalize frequency (float/string) to canonical key used for graph data."""
+    if value is None:
+        return ""
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return stripped
+        try:
+            value = float(stripped)
+        except ValueError:
+            return stripped
+
+    if isinstance(value, (int, float)):
+        text_val = f"{float(value):.4f}".rstrip("0").rstrip(".")
+        return text_val or str(value)
+
+    return str(value)
+
+
+
+
+def s11_db_to_vswr(db_value: float | int | str) -> float:
+    """Convert nilai S11 / return loss (dB) menjadi VSWR."""
+    try:
+        value = float(db_value)
+    except (TypeError, ValueError):
+        return float("nan")
+
+    # nilai negatif diasumsikan sudah S11 (dB); positif dianggap return loss (dB)
+    if value <= 0:
+        gamma = 10 ** (value / 20.0)
+    else:
+        gamma = 10 ** (-value / 20.0)
+
+    gamma = min(abs(gamma), 0.999999)
+    denominator = 1 - gamma
+    if denominator <= 0:
+        return float("inf")
+
+    return (1 + gamma) / denominator
+
+
+def load_return_loss_data(path: Path) -> dict[str, dict[str, list[float]]]:
+    """Read Excel workbook and return chart data keyed by frequency string."""
+
+    dataset: dict[str, dict[str, list[float]]] = {}
+
+    if not path.exists():
+        print(f"[return-loss] file '{path.name}' tidak ditemukan")
+        return dataset
+
+    try:
+        workbook = pd.ExcelFile(path)
+    except Exception as exc:  # pragma: no cover
+        print(f"[return-loss] gagal membuka '{path.name}': {exc}")
+        return dataset
+
+    for sheet in workbook.sheet_names:
+        try:
+            df = pd.read_excel(workbook, sheet_name=sheet, header=None)
+        except Exception as exc:  # pragma: no cover
+            print(f"[return-loss] gagal membaca sheet '{sheet}': {exc}")
+            continue
+
+        df = df.iloc[:, :2].dropna()
+        if df.empty:
+            continue
+
+        pairs = [
+            (float(freq_val), float(rl_val))
+            for freq_val, rl_val in zip(df.iloc[:, 0], df.iloc[:, 1])
+        ]
+        pairs.sort(key=lambda item: item[0])
+
+        freq_axis = [freq for freq, _ in pairs]
+        return_loss = [rl for _, rl in pairs]
+        vswr = [s11_db_to_vswr(value) for value in return_loss]
+
+        try:
+            freq_numeric = float(sheet)
+        except ValueError:
+            freq_numeric = None
+
+        freq_key = format_freq_key(freq_numeric if freq_numeric is not None else sheet)
+
+        dataset[freq_key] = {
+            'freq_key': freq_key,
+            'freq_ghz': freq_numeric,
+            'frequency_axis': freq_axis,
+            'return_loss': return_loss,
+            'vswr': vswr,
+            'sheet': sheet,
+        }
+
+    return dataset
+
+
+RETURN_LOSS_DATA = load_return_loss_data(RETURN_LOSS_FILE)
 
 
 @dataclass
@@ -201,6 +307,7 @@ def index():
     safe_freq = selected_freq if selected_freq in FREQ_OPTIONS_GHZ else FREQ_OPTIONS_GHZ[0]
     svg_results = results if results is not None else compute_all(safe_freq)
     show_svg_labels = results is not None
+    selected_freq_key = format_freq_key(safe_freq)
 
     return render_template(
         "index.html",
@@ -211,6 +318,8 @@ def index():
         svg_results=svg_results,
         show_svg_labels=show_svg_labels,
         error=error,
+        return_loss_data=RETURN_LOSS_DATA,
+        selected_freq_key=selected_freq_key,
     )
 
 

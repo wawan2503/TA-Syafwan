@@ -15,7 +15,6 @@
       </div>
     </div>
   </header>
-
   <main class="container">
     <!-- LEFT -->
     <section class="panel left">
@@ -24,7 +23,6 @@
           <h2>Input</h2>
           <p>Parameter tetap sesuai tugas: h, Zo, εr, c</p>
         </div>
-
         <div class="grid">
           <label class="field">
             <span>Frekuensi (GHz)</span>
@@ -34,43 +32,34 @@
               {% endfor %}
             </select>
           </label>
-
           <label class="field">
             <span>h (mm)</span>
             <input value="{{ fixed.h_mm }}" readonly />
           </label>
-
           <label class="field">
             <span>Zo (Ω)</span>
             <input value="{{ fixed.z0 }}" readonly />
           </label>
-
           <label class="field">
             <span>εr</span>
             <input value="{{ fixed.er }}" readonly />
           </label>
-
           <label class="field">
             <span>c (m/s)</span>
             <input value="{{ '{:.0e}'.format(fixed.c) }}" readonly />
           </label>
         </div>
-
         <div class="actions">
           <button class="btn" type="submit">Hitung</button>
         </div>
-
         {% if error %}
           <div class="alert">{{ error }}</div>
         {% endif %}
-
         <div class="card-divider"></div>
-
         <div class="card-header">
           <h2>Output Spesifikasi</h2>
           <p>Wp, Lp, Wg, Lg, Wf, Lf</p>
         </div>
-
         {% if results %}
           <div class="table">
             <div class="row"><div>Wp (mm)</div><div>{{ '%.2f'|format(results.wp_mm) }}</div></div>
@@ -85,14 +74,11 @@
         {% else %}
           <div class="muted">Klik <b>Hitung</b> untuk menampilkan hasil & gambar.</div>
         {% endif %}
-
         <div class="card-divider"></div>
-
         <div class="card-header">
           <h2>Catatan Hasil Simulator</h2>
           <p>Opsional: isi manual hasil AWR / CST</p>
         </div>
-
         <div class="grid">
           <label class="field">
             <span>Hasil Simulator AWR</span>
@@ -105,7 +91,6 @@
         </div>
       </form>
     </section>
-
     <!-- RIGHT -->
     <section class="panel right">
       <div class="card">
@@ -113,7 +98,6 @@
           <h2>Visualisasi Antena</h2>
           <p>Gambar langsung tampil, angka dimensi muncul setelah tombol <b>Hitung</b>.</p>
         </div>
-
         <div class="viz">
           {% if svg_results %}
             {% with results=svg_results, show_labels=show_svg_labels %}
@@ -124,14 +108,272 @@
           {% endif %}
         </div>
       </div>
+      <div class="card">
+        <div class="card-header">
+          <h2>Grafik Return Loss</h2>
+          <p>Data diambil langsung dari <code>return loss.xlsx</code>.</p>
+        </div>
+        {% if return_loss_data %}
+          <div class="chart-meta">
+            <div>
+              Frekuensi pilihan: <span id="chartFreqLabel">{{ '%.1f'|format(selected_freq) }}</span> GHz
+            </div>
+            <div>Return Loss: <span id="chartRlValue">-</span> dB</div>
+            <div class="chart-note">Sumbu X mengikuti isi sheet Excel.</div>
+          </div>
+          <div class="chart-holder">
+            <canvas id="returnLossChart" aria-label="Grafik Return Loss vs Frekuensi"></canvas>
+          </div>
+        {% else %}
+          <div class="muted">File <b>return loss.xlsx</b> belum ditemukan atau tidak dapat dibaca.</div>
+        {% endif %}
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <h2>Grafik VSWR</h2>
+          <p>Dihitung otomatis dari data return loss.</p>
+        </div>
+        {% if return_loss_data %}
+          <div class="chart-meta">
+            <div>
+              Frekuensi pilihan: <span id="chartFreqLabelVswr">{{ '%.1f'|format(selected_freq) }}</span> GHz
+            </div>
+            <div>VSWR: <span id="chartVswrValue">-</span></div>
+            <div class="chart-note">VSWR = (1 + |Gamma|) / (1 - |Gamma|).</div>
+          </div>
+          <div class="chart-holder">
+            <canvas id="vswrChart" aria-label="Grafik VSWR vs Frekuensi"></canvas>
+          </div>
+        {% else %}
+          <div class="muted">File <b>return loss.xlsx</b> belum ditemukan atau tidak dapat dibaca.</div>
+        {% endif %}
+      </div>
     </section>
   </main>
-
   <footer class="footer">
     Flask • Tampilan sesuai tugas
   </footer>
+  {% if return_loss_data %}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script>
+    (() => {
+      const datasetByFreq = {{ return_loss_data | tojson | safe }};
+      const initialKey = {{ selected_freq_key | tojson }};
+      const rlCanvas = document.getElementById('returnLossChart');
+      const vswrCanvas = document.getElementById('vswrChart');
+      const freqLabelRl = document.getElementById('chartFreqLabel');
+      const freqLabelVswr = document.getElementById('chartFreqLabelVswr');
+      const rlValueEl = document.getElementById('chartRlValue');
+      const vswrValueEl = document.getElementById('chartVswrValue');
+      const selectEl = document.querySelector('select[name="freq"]');
+      if ((!rlCanvas && !vswrCanvas) || typeof window.Chart === 'undefined') {
+        return;
+      }
+      const keyFromValue = (value) => {
+        if (value === null || value === undefined || value === '') {
+          return '';
+        }
+        const num = Number(value);
+        if (Number.isNaN(num)) {
+          return String(value).trim();
+        }
+        return parseFloat(num.toFixed(4)).toString();
+      };
+      const formatLabel = (value) => {
+        if (value === null || value === undefined || value === '') {
+          return '-';
+        }
+        const num = Number(value);
+        if (Number.isNaN(num)) {
+          return String(value);
+        }
+        return parseFloat(num.toFixed(2)).toString();
+      };
+      const toNumber = (value) => {
+        const num = Number(value);
+        return Number.isNaN(num) ? null : num;
+      };
+      const findHighlightIndex = (axis, targetValue) => {
+        if (!Array.isArray(axis) || axis.length === 0) {
+          return -1;
+        }
+        const targetNum = toNumber(targetValue);
+        if (targetNum === null) {
+          return -1;
+        }
+        let bestIdx = -1;
+        let bestDiff = Infinity;
+        axis.forEach((value, idx) => {
+          const freqNum = toNumber(value);
+          if (freqNum === null) {
+            return;
+          }
+          const diff = Math.abs(freqNum - targetNum);
+          if (diff < bestDiff) {
+            bestDiff = diff;
+            bestIdx = idx;
+          }
+        });
+        return bestIdx;
+      };
+      let rlChart = null;
+      let vswrChart = null;
+      const buildRlOptions = () => ({
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const freq = ctx.label ?? ctx.parsed.x;
+                const val = ctx.parsed.y;
+                return `f = ${freq} GHz, S11 = ${val} dB`;
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            title: { display: true, text: 'Frekuensi (GHz)' },
+            ticks: { maxTicksLimit: 8 },
+            grid: { color: 'rgba(255,255,255,0.1)' },
+          },
+          y: {
+            title: { display: true, text: 'Return Loss (dB)' },
+            grid: { color: 'rgba(255,255,255,0.1)' },
+          },
+        },
+      });
+      const buildVswrOptions = () => ({
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const freq = ctx.label ?? ctx.parsed.x;
+                const val = ctx.parsed.y;
+                return `f = ${freq} GHz, VSWR = ${val}`;
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            title: { display: true, text: 'Frekuensi (GHz)' },
+            ticks: { maxTicksLimit: 8 },
+            grid: { color: 'rgba(255,255,255,0.1)' },
+          },
+          y: {
+            title: { display: true, text: 'VSWR' },
+            suggestedMin: 1,
+            grid: { color: 'rgba(255,255,255,0.1)' },
+          },
+        },
+      });
+      const updateLabels = (entry, highlightIndex) => {
+        const labelValue = entry.freq_ghz ?? entry.freq_key;
+        const formatted = formatLabel(labelValue);
+        if (freqLabelRl) {
+          freqLabelRl.textContent = formatted;
+        }
+        if (freqLabelVswr) {
+          freqLabelVswr.textContent = formatted;
+        }
+        const rlValue = (highlightIndex >= 0 && Array.isArray(entry.return_loss) && highlightIndex < entry.return_loss.length)
+          ? entry.return_loss[highlightIndex]
+          : null;
+        if (rlValueEl) {
+          rlValueEl.textContent = typeof rlValue === 'number' ? rlValue.toFixed(2) : '-';
+        }
+        const vswrValue = (highlightIndex >= 0 && Array.isArray(entry.vswr) && highlightIndex < entry.vswr.length)
+          ? entry.vswr[highlightIndex]
+          : null;
+        if (vswrValueEl) {
+          vswrValueEl.textContent = typeof vswrValue === 'number' ? vswrValue.toFixed(3) : '-';
+        }
+      };
+      const updateCharts = (freqKey) => {
+        const entry = datasetByFreq[freqKey];
+        if (!entry) {
+          return;
+        }
+        const highlightIndex = findHighlightIndex(entry.frequency_axis, entry.freq_ghz ?? entry.freq_key);
+        const highlightRadius = (ctx) => (ctx.dataIndex === highlightIndex ? 5 : 0);
+        const highlightBg = (ctx) => (ctx.dataIndex === highlightIndex ? '#ffffff' : 'rgba(0,0,0,0)');
+        const highlightBorder = (ctx) => (ctx.dataIndex === highlightIndex ? 'rgba(15,23,35,0.85)' : 'rgba(0,0,0,0)');
+        const highlightBorderWidth = (ctx) => (ctx.dataIndex === highlightIndex ? 2 : 0);
+        if (rlCanvas) {
+          const data = {
+            labels: entry.frequency_axis,
+            datasets: [{
+              label: 'Return Loss (dB)',
+              data: entry.return_loss,
+              borderColor: 'rgba(141,214,255,1)',
+              backgroundColor: 'rgba(141,214,255,0.15)',
+              borderWidth: 2,
+              tension: 0.25,
+              fill: true,
+              pointRadius: highlightRadius,
+              pointHitRadius: 10,
+              pointBackgroundColor: highlightBg,
+              pointBorderColor: highlightBorder,
+              pointBorderWidth: highlightBorderWidth,
+            }],
+          };
+          if (!rlChart) {
+            rlChart = new Chart(rlCanvas, { type: 'line', data, options: buildRlOptions() });
+          } else {
+            rlChart.data = data;
+            rlChart.update();
+          }
+        }
+        if (vswrCanvas && Array.isArray(entry.vswr)) {
+          const vswrData = {
+            labels: entry.frequency_axis,
+            datasets: [{
+              label: 'VSWR',
+              data: entry.vswr,
+              borderColor: 'rgba(167,255,177,1)',
+              backgroundColor: 'rgba(167,255,177,0.15)',
+              borderWidth: 2,
+              tension: 0.25,
+              fill: true,
+              pointRadius: highlightRadius,
+              pointHitRadius: 10,
+              pointBackgroundColor: highlightBg,
+              pointBorderColor: highlightBorder,
+              pointBorderWidth: highlightBorderWidth,
+            }],
+          };
+          if (!vswrChart) {
+            vswrChart = new Chart(vswrCanvas, { type: 'line', data: vswrData, options: buildVswrOptions() });
+          } else {
+            vswrChart.data = vswrData;
+            vswrChart.update();
+          }
+        }
+        updateLabels(entry, highlightIndex);
+      };
+      const initialKeyResolved = datasetByFreq[initialKey] ? initialKey : Object.keys(datasetByFreq)[0];
+      if (!initialKeyResolved) {
+        return;
+      }
+      updateCharts(initialKeyResolved);
+      if (selectEl) {
+        selectEl.addEventListener('change', (event) => {
+          const targetKey = keyFromValue(event.target.value);
+          if (datasetByFreq[targetKey]) {
+            updateCharts(targetKey);
+          }
+        });
+      }
+    })();
+  </script>
+  {% endif %}
 </body>
 </html>
-
-
-
