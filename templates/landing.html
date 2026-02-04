@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kalkulator Antena Mikrostrip</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div>
+        <div class="brand-title">Kalkulator Antena Mikrostrip</div>
+        <div class="brand-subtitle">Toolkit cepat untuk tugas rectangular patch di FR-4</div>
+      </div>
+      <div class="topbar-actions">
+        <a class="pill pill-link" href="{{ url_for('calculator') }}">Buka kalkulator</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="container-landing landing-wrapper">
+    <section class="card hero-showcase">
+      <div class="hero-content">
+        <p class="hero-eyebrow">Rectangular microstrip patch · FR-4 substrate</p>
+        <h1>Rancang antena mikrostrip dengan tampilan yang rapi dan hasil akurat</h1>
+        <p class="hero-desc">
+          Hitung dimensi Wp, Lp, Wg, Lg, Wf, dan Lf hanya dari pilihan frekuensi preset.
+          Seluruh hasil ditampilkan bareng visual patch serta grafik return loss dan VSWR yang terhubung ke Google Sheets.
+        </p>
+
+        <div class="hero-tags">
+          <span class="chip">Transmission-line model</span>
+          <span class="chip">er = {{ fixed.er }}</span>
+          <span class="chip">Zo = {{ fixed.z0 }} Ohm</span>
+        </div>
+
+        <div class="hero-actions">
+          <a class="btn btn-inline btn-primary" href="{{ url_for('calculator') }}">Mulai Hitung</a>
+          <form class="hero-form" method="get" action="{{ url_for('calculator') }}">
+            <label class="field">
+              <span>Frekuensi (GHz)</span>
+              <select name="freq">
+                {% for f in freq_options %}
+                  <option value="{{ f }}" {% if f == selected_freq %}selected{% endif %}>{{ f }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <button class="btn btn-inline btn-ghost" type="submit">Gunakan frekuensi ini</button>
+          </form>
+        </div>
+
+        <ul class="hero-highlights">
+          <li><span>Preset</span>1.8 - 3.3 GHz</li>
+          <li><span>Output</span>Dimensi patch & feedline lengkap</li>
+          <li><span>Grafik</span>Return loss & VSWR dari Google Sheets</li>
+        </ul>
+
+        <div class="hero-stats">
+          <div class="hero-stat">
+            <span>h (thickness)</span>
+            <strong>{{ fixed.h_mm }} mm</strong>
+          </div>
+          <div class="hero-stat">
+            <span>Zo (impedansi)</span>
+            <strong>{{ fixed.z0 }} Ohm</strong>
+          </div>
+          <div class="hero-stat">
+            <span>er (FR-4)</span>
+            <strong>{{ fixed.er }}</strong>
+          </div>
+          <div class="hero-stat">
+            <span>c (m/s)</span>
+            <strong>{{ '{:.0e}'.format(fixed.c) }}</strong>
+          </div>
+        </div>
+      </div>
+
+      <div class="hero-visual">
+        <div class="hero-visual-glow"></div>
+        <div class="viz viz-hero">
+          {% with results=svg_results, show_labels=false %}
+            {% include "_antenna.svg" %}
+          {% endwith %}
+        </div>
+      </div>
+    </section>
+
+    <section class="landing-grid">
+      <article class="card info-card">
+        <div class="card-header">
+          <p class="eyebrow">Parameter tetap</p>
+          <h2>Konstanta desain</h2>
+          <p class="muted-text">Nilai di bawah menjadi dasar setiap perhitungan.</p>
+        </div>
+        <div class="stat-list">
+          <div class="stat-item">
+            <span>Ketebalan substrat (h)</span>
+            <strong>{{ fixed.h_mm }} mm</strong>
+          </div>
+          <div class="stat-item">
+            <span>Impedansi karakteristik (Zo)</span>
+            <strong>{{ fixed.z0 }} Ohm</strong>
+          </div>
+          <div class="stat-item">
+            <span>Permitivitias relatif (er)</span>
+            <strong>{{ fixed.er }}</strong>
+          </div>
+          <div class="stat-item">
+            <span>Kecepatan cahaya (c)</span>
+            <strong>{{ '{:.0e}'.format(fixed.c) }} m/s</strong>
+          </div>
+        </div>
+      </article>
+
+      <article class="card info-card">
+        <div class="card-header">
+          <p class="eyebrow">Kenapa pakai kalkulator ini?</p>
+          <h2>Workflow singkat</h2>
+          <p class="muted-text">Landing page ini dirancang supaya dosen/teman langsung paham apa yang tersedia.</p>
+        </div>
+        <ul class="feature-list">
+          <li>
+            <div class="feature-dot"></div>
+            Visual patch selalu tampil sehingga dimensi mudah dijelaskan.
+          </li>
+          <li>
+            <div class="feature-dot"></div>
+            Nilai return loss & VSWR sinkron otomatis dari Google Sheets.
+          </li>
+          <li>
+            <div class="feature-dot"></div>
+            UI bernuansa gelap biar nyaman saat presentasi malam hari.
+          </li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="card feature-section">
+      <div class="card-header">
+        <p class="eyebrow">Cara pakai</p>
+        <h2>3 langkah sederhana</h2>
+      </div>
+      <div class="feature-grid">
+        <article class="feature-card">
+          <div class="feature-number">1</div>
+          <h3>Pilih frekuensi</h3>
+          <p>Pilih salah satu opsi preset dan lanjutkan dari tombol di atas.</p>
+        </article>
+        <article class="feature-card">
+          <div class="feature-number">2</div>
+          <h3>Hitung otomatis</h3>
+          <p>Masuk ke kalkulator, klik Hitung, dan dapatkan setiap parameter dimensi.</p>
+        </article>
+        <article class="feature-card">
+          <div class="feature-number">3</div>
+          <h3>Tampilkan grafik</h3>
+          <p>Scroll ke bagian grafik untuk menunjukkan performa return loss & VSWR.</p>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    Dibuat dengan Flask · Tampilan mengikuti kebutuhan tugas mikrostrip.
+  </footer>
+</body>
+</html>

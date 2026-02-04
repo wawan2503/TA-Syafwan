@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import io
 import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 import pandas as pd
 from flask import Flask, render_template, request
@@ -20,7 +23,13 @@ Z0_OHM = 50.0    # ohm
 
 PATCH_WIDTH_SCALE = 2.0  # scale patch width (visual requirement)
 
-RETURN_LOSS_FILE = Path(__file__).with_name("return loss.xlsx")
+RETURN_LOSS_URL = (
+    "https://docs.google.com/spreadsheets/d/1MqD1i4gFATr4pEF78kUzb_IFn4WGJgSZ/export?format=xlsx"
+)
+VSWR_URL = (
+    "https://docs.google.com/spreadsheets/d/1VbDwD5FOYmovukIXw-x5rZ1WPV3Ayw80/export?format=xlsx"
+)
+
 
 
 def format_freq_key(value: float | str) -> str:
@@ -44,8 +53,6 @@ def format_freq_key(value: float | str) -> str:
     return str(value)
 
 
-
-
 def s11_db_to_vswr(db_value: float | int | str) -> float:
     """Convert nilai S11 / return loss (dB) menjadi VSWR."""
     try:
@@ -67,19 +74,65 @@ def s11_db_to_vswr(db_value: float | int | str) -> float:
     return (1 + gamma) / denominator
 
 
-def load_return_loss_data(path: Path) -> dict[str, dict[str, list[float]]]:
+def fetch_excel_bytes(url: str, timeout: float = 30.0, tag: str = "excel") -> io.BytesIO | None:
+    """Download XLSX bytes from a Google Sheets export URL."""
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/123.0.0.0 Safari/537.36"
+        ),
+        "Accept": (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,"
+            "application/octet-stream"
+        ),
+    }
+
+    request = Request(url, headers=headers)
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            return io.BytesIO(response.read())
+    except URLError as exc:  # pragma: no cover
+        print(f"[{tag}] gagal mengunduh data dari '{url}': {exc}")
+        return None
+
+
+def _open_excel_workbook(source: Path | str, label: str) -> Optional[pd.ExcelFile]:
+    """Open Excel workbook either from a local path or remote URL."""
+    workbook: Optional[pd.ExcelFile] = None
+
+    if isinstance(source, Path):
+        display_name = source.name
+        if not source.exists():
+            print(f"[{label}] file '{display_name}' tidak ditemukan")
+            return None
+
+        try:
+            workbook = pd.ExcelFile(source)
+        except Exception as exc:  # pragma: no cover
+            print(f"[{label}] gagal membuka '{display_name}': {exc}")
+            return None
+    else:
+        display_name = str(source)
+        buffer = fetch_excel_bytes(display_name, tag=label)
+        if buffer is None:
+            return None
+
+        try:
+            workbook = pd.ExcelFile(buffer)
+        except Exception as exc:  # pragma: no cover
+            print(f"[{label}] gagal membaca sumber '{display_name}': {exc}")
+            return None
+
+    return workbook
+
+
+def load_return_loss_data(source: Path | str) -> dict[str, dict[str, list[float]]]:
     """Read Excel workbook and return chart data keyed by frequency string."""
 
     dataset: dict[str, dict[str, list[float]]] = {}
-
-    if not path.exists():
-        print(f"[return-loss] file '{path.name}' tidak ditemukan")
-        return dataset
-
-    try:
-        workbook = pd.ExcelFile(path)
-    except Exception as exc:  # pragma: no cover
-        print(f"[return-loss] gagal membuka '{path.name}': {exc}")
+    workbook = _open_excel_workbook(source, "return-loss")
+    if workbook is None:
         return dataset
 
     for sheet in workbook.sheet_names:
@@ -111,18 +164,92 @@ def load_return_loss_data(path: Path) -> dict[str, dict[str, list[float]]]:
         freq_key = format_freq_key(freq_numeric if freq_numeric is not None else sheet)
 
         dataset[freq_key] = {
-            'freq_key': freq_key,
-            'freq_ghz': freq_numeric,
-            'frequency_axis': freq_axis,
-            'return_loss': return_loss,
-            'vswr': vswr,
-            'sheet': sheet,
+            "freq_key": freq_key,
+            "freq_ghz": freq_numeric,
+            "frequency_axis": freq_axis,
+            "return_loss": return_loss,
+            "vswr": vswr,
+            "sheet": sheet,
         }
 
     return dataset
 
 
-RETURN_LOSS_DATA = load_return_loss_data(RETURN_LOSS_FILE)
+def load_vswr_data(source: Path | str) -> dict[str, dict[str, list[float]]]:
+    """Read VSWR workbook and return chart data keyed by frequency string."""
+
+    dataset: dict[str, dict[str, list[float]]] = {}
+    workbook = _open_excel_workbook(source, "vswr")
+    if workbook is None:
+        return dataset
+
+    for sheet in workbook.sheet_names:
+        try:
+            df = pd.read_excel(workbook, sheet_name=sheet, header=None)
+        except Exception as exc:  # pragma: no cover
+            print(f"[vswr] gagal membaca sheet '{sheet}': {exc}")
+            continue
+
+        df = df.iloc[:, :2].dropna()
+        if df.empty:
+            continue
+
+        pairs = [
+            (float(freq_val), float(vswr_val))
+            for freq_val, vswr_val in zip(df.iloc[:, 0], df.iloc[:, 1])
+        ]
+        pairs.sort(key=lambda item: item[0])
+
+        freq_axis = [freq for freq, _ in pairs]
+        vswr_values = [value for _, value in pairs]
+
+        try:
+            freq_numeric = float(sheet)
+        except ValueError:
+            freq_numeric = None
+
+        freq_key = format_freq_key(freq_numeric if freq_numeric is not None else sheet)
+
+        dataset[freq_key] = {
+            "freq_key": freq_key,
+            "freq_ghz": freq_numeric,
+            "frequency_axis": freq_axis,
+            "vswr": vswr_values,
+            "sheet": sheet,
+        }
+
+    return dataset
+
+
+def load_chart_data(return_loss_source: Path | str, vswr_source: Path | str) -> dict[str, dict[str, list[float]]]:
+    """Combine return-loss and VSWR datasets for chart consumption."""
+
+    dataset = load_return_loss_data(return_loss_source)
+    vswr_dataset = load_vswr_data(vswr_source)
+
+    for freq_key, vswr_entry in vswr_dataset.items():
+        base = dataset.setdefault(
+            freq_key,
+            {
+                "freq_key": freq_key,
+                "freq_ghz": vswr_entry.get("freq_ghz"),
+                "frequency_axis": vswr_entry.get("frequency_axis", []),
+                "return_loss": [],
+                "vswr": [],
+                "sheet": vswr_entry.get("sheet"),
+            },
+        )
+
+        base["vswr"] = vswr_entry.get("vswr", [])
+        if not base.get("frequency_axis"):
+            base["frequency_axis"] = vswr_entry.get("frequency_axis", [])
+        if base.get("freq_ghz") is None:
+            base["freq_ghz"] = vswr_entry.get("freq_ghz")
+
+    return dataset
+
+
+RETURN_LOSS_DATA = load_chart_data(RETURN_LOSS_URL, VSWR_URL)
 
 
 @dataclass
@@ -143,17 +270,12 @@ class Results:
 # =========================
 
 def eps_eff_hammerstad(er: float, w_h: float) -> float:
-    """
-    Effective permittivity microstrip (Hammerstad-Jensen approximation).
-    w_h = W/h
-    """
+    """Effective permittivity microstrip (Hammerstad-Jensen approximation)."""
     if w_h <= 0:
         return float("nan")
 
-    # base term
     ee = (er + 1) / 2 + (er - 1) / 2 * (1 / math.sqrt(1 + 12 / w_h))
 
-    # correction for narrow lines (w_h < 1)
     if w_h < 1:
         ee += 0.04 * (1 - w_h) ** 2
 
@@ -161,56 +283,61 @@ def eps_eff_hammerstad(er: float, w_h: float) -> float:
 
 
 def microstrip_z0(er: float, w_h: float) -> float:
-    """
-    Characteristic impedance Z0 for microstrip line (common closed-form).
-    Uses eps_eff_hammerstad(er, w_h).
-    """
+    """Characteristic impedance Z0 for microstrip line."""
     ee = eps_eff_hammerstad(er, w_h)
     if w_h <= 0 or math.isnan(ee) or ee <= 0:
         return float("nan")
 
     if w_h <= 1:
-        # narrow line
         return (60 / math.sqrt(ee)) * math.log(8 / w_h + 0.25 * w_h)
-    else:
-        # wide line
-        return (120 * math.pi) / (math.sqrt(ee) * (w_h + 1.393 + 0.667 * math.log(w_h + 1.444)))
+
+    return (120 * math.pi) / (math.sqrt(ee) * (w_h + 1.393 + 0.667 * math.log(w_h + 1.444)))
+
+
+def microstrip_w_h_for_z0(er: float, z0: float) -> float:
+    """Closed-form approximation for W/h given target Z0 (ohm)."""
+    if er <= 0 or z0 <= 0:
+        return float("nan")
+
+    a = (z0 / 60) * math.sqrt((er + 1) / 2) + ((er - 1) / (er + 1)) * (0.23 + 0.11 / er)
+    w_h = (8 * math.exp(a)) / (math.exp(2 * a) - 2)
+    if w_h <= 2:
+        return w_h
+
+    b = (377 * math.pi) / (2 * z0 * math.sqrt(er))
+    return (2 / math.pi) * (
+        b
+        - 1
+        - math.log(2 * b - 1)
+        + ((er - 1) / (2 * er)) * (math.log(b - 1) + 0.39 - 0.61 / er)
+    )
 
 
 def solve_w_h_for_z0(er: float, z0: float, tol: float = 1e-6, max_iter: int = 120) -> float:
-    """
-    Solve W/h given target Z0 (ohm) using bisection.
-    """
-    # bounds for W/h (very small to very large)
+    """Solve W/h given target Z0 (ohm) using bisection."""
     lo = 1e-6
     hi = 100.0
 
-    # ensure function crosses target (Z0 decreases as W/h increases generally)
     z_lo = microstrip_z0(er, lo)
     z_hi = microstrip_z0(er, hi)
 
-    # If bounds are weird, expand hi
     expand = 0
     while (math.isnan(z_lo) or math.isnan(z_hi) or z_lo < z0 or z_hi > z0) and expand < 20:
-        # We want z_lo > z0 and z_hi < z0 ideally
         hi *= 2
         z_hi = microstrip_z0(er, hi)
         expand += 1
 
-    # Bisection
     for _ in range(max_iter):
         mid = (lo + hi) / 2
         z_mid = microstrip_z0(er, mid)
 
         if math.isnan(z_mid):
-            # move a bit
             lo = mid
             continue
 
         if abs(z_mid - z0) < 1e-6:
             return mid
 
-        # Z0 decreases as w_h increases
         if z_mid > z0:
             lo = mid
         else:
@@ -227,24 +354,14 @@ def solve_w_h_for_z0(er: float, z0: float, tol: float = 1e-6, max_iter: int = 12
 # =========================
 
 def patch_width(c: float, f_hz: float, er: float) -> float:
-    """
-    Patch width (rectangular) - formula umum:
-      W = c / (2 f) * sqrt(2/(er + 1))
-    """
+    """Patch width (rectangular) - formula umum."""
     return (c / (2 * f_hz)) * math.sqrt(2 / (er + 1))
 
 
 def patch_length(c: float, f_hz: float, er: float, h_m: float, w_m: float) -> tuple[float, float]:
-    """
-    Patch length (rectangular) - formula umum:
-      eps_eff = (er+1)/2 + (er-1)/2 * 1/sqrt(1 + 12h/W)
-      ΔL/h = 0.412 * ((eps_eff+0.3)(W/h+0.264))/((eps_eff-0.258)(W/h+0.8))
-      Leff = c/(2f*sqrt(eps_eff))
-      L = Leff - 2ΔL
-    returns (L, eps_eff)
-    """
+    """Patch length (rectangular) - formula umum."""
     w_h = w_m / h_m
-    eps_eff = (er + 1) / 2 + (er - 1) / 2 * (1 / math.sqrt(1 + 12 / w_h))
+    eps_eff = eps_eff_hammerstad(er, w_h)
 
     delta_l = 0.412 * h_m * ((eps_eff + 0.3) * (w_h + 0.264)) / ((eps_eff - 0.258) * (w_h + 0.8))
     leff = c / (2 * f_hz * math.sqrt(eps_eff))
@@ -257,22 +374,20 @@ def compute_all(freq_ghz: float) -> Results:
     f_hz = freq_ghz * 1e9
     h_m = H_MM * 1e-3
 
-    # --- Patch W & L (rumus umum) ---
     wp_m = patch_width(C, f_hz, ER) * PATCH_WIDTH_SCALE
     lp_m, eps_patch = patch_length(C, f_hz, ER, h_m, wp_m)
 
-    # --- Ground plane (umum: tambah 3h tiap sisi => +6h total) ---
-    wg_m = wp_m + 6 * h_m
-    lg_m = lp_m + 6 * h_m
-
-    # --- Feedline width Wf for Z0 (rumus umum microstrip) ---
-    w_h_line = solve_w_h_for_z0(ER, Z0_OHM)
+    w_h_line = microstrip_w_h_for_z0(ER, Z0_OHM)
+    if math.isnan(w_h_line) or w_h_line <= 0:
+        w_h_line = solve_w_h_for_z0(ER, Z0_OHM)
     wf_m = w_h_line * h_m
     eps_line = eps_eff_hammerstad(ER, w_h_line)
 
-    # --- Feedline length: quarter guided wavelength ---
     lambda_g = C / (f_hz * math.sqrt(eps_line))
     lf_m = 0.25 * lambda_g
+
+    wg_m = wp_m + 6 * h_m
+    lg_m = lp_m + lf_m + 6 * h_m
 
     to_mm = 1e3
     return Results(
@@ -288,8 +403,33 @@ def compute_all(freq_ghz: float) -> Results:
     )
 
 
-@app.route("/", methods=["GET", "POST"])
-def index():
+def _parse_freq_from_query(default_freq: float) -> float:
+    try:
+        q = request.args.get("freq")
+        if q is not None:
+            return float(q)
+    except Exception:
+        pass
+    return default_freq
+
+
+@app.route("/", methods=["GET"])
+def landing():
+    selected_freq = _parse_freq_from_query(FREQ_OPTIONS_GHZ[0])
+    safe_freq = selected_freq if selected_freq in FREQ_OPTIONS_GHZ else FREQ_OPTIONS_GHZ[0]
+    svg_results = compute_all(safe_freq)
+
+    return render_template(
+        "landing.html",
+        freq_options=FREQ_OPTIONS_GHZ,
+        fixed=dict(h_mm=H_MM, z0=Z0_OHM, er=ER, c=C),
+        selected_freq=safe_freq,
+        svg_results=svg_results,
+    )
+
+
+@app.route("/calculator", methods=["GET", "POST"])
+def calculator():
     results: Optional[Results] = None
     error: Optional[str] = None
 
@@ -301,8 +441,10 @@ def index():
             if selected_freq not in FREQ_OPTIONS_GHZ:
                 selected_freq = FREQ_OPTIONS_GHZ[0]
             results = compute_all(selected_freq)
-        except Exception as e:
-            error = f"Gagal menghitung: {e}"
+        except Exception as exc:
+            error = f"Gagal menghitung: {exc}"
+    else:
+        selected_freq = _parse_freq_from_query(selected_freq)
 
     safe_freq = selected_freq if selected_freq in FREQ_OPTIONS_GHZ else FREQ_OPTIONS_GHZ[0]
     svg_results = results if results is not None else compute_all(safe_freq)
