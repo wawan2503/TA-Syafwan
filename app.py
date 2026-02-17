@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import io
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
-from urllib.error import URLError
-from urllib.request import Request, urlopen
+from typing import Any, Dict, Iterable, Optional
 
-import pandas as pd
 from flask import Flask, render_template, request
 
 app = Flask(__name__)
@@ -23,13 +19,7 @@ Z0_OHM = 50.0    # ohm
 
 PATCH_WIDTH_SCALE = 2.0  # scale patch width (visual requirement)
 
-RETURN_LOSS_URL = (
-    "https://docs.google.com/spreadsheets/d/1MqD1i4gFATr4pEF78kUzb_IFn4WGJgSZ/export?format=xlsx"
-)
-VSWR_URL = (
-    "https://docs.google.com/spreadsheets/d/1VbDwD5FOYmovukIXw-x5rZ1WPV3Ayw80/export?format=xlsx"
-)
-
+BASE_DIR = Path(__file__).resolve().parent
 
 
 def format_freq_key(value: float | str) -> str:
@@ -53,203 +43,236 @@ def format_freq_key(value: float | str) -> str:
     return str(value)
 
 
-def s11_db_to_vswr(db_value: float | int | str) -> float:
-    """Convert nilai S11 / return loss (dB) menjadi VSWR."""
+def _safe_float(value: str | float | int | None) -> Optional[float]:
+    if value is None:
+        return None
     try:
-        value = float(db_value)
+        return float(str(value).replace(',', '.'))
     except (TypeError, ValueError):
-        return float("nan")
-
-    # nilai negatif diasumsikan sudah S11 (dB); positif dianggap return loss (dB)
-    if value <= 0:
-        gamma = 10 ** (value / 20.0)
-    else:
-        gamma = 10 ** (-value / 20.0)
-
-    gamma = min(abs(gamma), 0.999999)
-    denominator = 1 - gamma
-    if denominator <= 0:
-        return float("inf")
-
-    return (1 + gamma) / denominator
-
-
-def fetch_excel_bytes(url: str, timeout: float = 30.0, tag: str = "excel") -> io.BytesIO | None:
-    """Download XLSX bytes from a Google Sheets export URL."""
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/123.0.0.0 Safari/537.36"
-        ),
-        "Accept": (
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,"
-            "application/octet-stream"
-        ),
-    }
-
-    request = Request(url, headers=headers)
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            return io.BytesIO(response.read())
-    except URLError as exc:  # pragma: no cover
-        print(f"[{tag}] gagal mengunduh data dari '{url}': {exc}")
         return None
 
 
-def _open_excel_workbook(source: Path | str, label: str) -> Optional[pd.ExcelFile]:
-    """Open Excel workbook either from a local path or remote URL."""
-    workbook: Optional[pd.ExcelFile] = None
-
-    if isinstance(source, Path):
-        display_name = source.name
-        if not source.exists():
-            print(f"[{label}] file '{display_name}' tidak ditemukan")
-            return None
-
-        try:
-            workbook = pd.ExcelFile(source)
-        except Exception as exc:  # pragma: no cover
-            print(f"[{label}] gagal membuka '{display_name}': {exc}")
-            return None
-    else:
-        display_name = str(source)
-        buffer = fetch_excel_bytes(display_name, tag=label)
-        if buffer is None:
-            return None
-
-        try:
-            workbook = pd.ExcelFile(buffer)
-        except Exception as exc:  # pragma: no cover
-            print(f"[{label}] gagal membaca sumber '{display_name}': {exc}")
-            return None
-
-    return workbook
+def _slugify(text: str) -> str:
+    cleaned = ''.join(ch if ch.isalnum() else '-' for ch in text.lower())
+    while '--' in cleaned:
+        cleaned = cleaned.replace('--', '-')
+    return cleaned.strip('-') or 'default'
 
 
-def load_return_loss_data(source: Path | str) -> dict[str, dict[str, list[float]]]:
-    """Read Excel workbook and return chart data keyed by frequency string."""
+def _line_looks_numeric(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+    first = stripped[0]
+    if first not in '-+.0123456789':
+        return False
+    if all(ch == '-' for ch in stripped):
+        return False
+    return True
 
-    dataset: dict[str, dict[str, list[float]]] = {}
-    workbook = _open_excel_workbook(source, "return-loss")
-    if workbook is None:
+
+def _parse_numeric_columns(path: Path, column_indexes: tuple[int, int]) -> tuple[list[float], list[float]]:
+    xs: list[float] = []
+    ys: list[float] = []
+    max_index = max(column_indexes)
+    try:
+        with path.open('r', encoding='utf-8', errors='ignore') as handle:
+            for line in handle:
+                if not _line_looks_numeric(line):
+                    continue
+                cleaned = line.replace(',', '.').split()
+                if len(cleaned) <= max_index:
+                    continue
+                try:
+                    x_val = float(cleaned[column_indexes[0]])
+                    y_val = float(cleaned[column_indexes[1]])
+                except ValueError:
+                    continue
+                xs.append(x_val)
+                ys.append(y_val)
+    except OSError as exc:  # pragma: no cover
+        print(f"[chart-data] gagal membaca '{path.name}': {exc}")
+    return xs, ys
+
+
+def _find_measurement_file(folder: Path, tokens: Iterable[str]) -> Optional[Path]:
+    tokens_lower = [token.lower() for token in tokens]
+    for candidate in sorted(folder.glob('*.txt')):
+        name_lower = candidate.name.lower()
+        if any(token in name_lower for token in tokens_lower):
+            return candidate
+    return None
+
+
+def _load_measurement_dataset(base_dir: Path, measurement_cfg: list[Dict[str, Any]]) -> dict[str, Any]:
+    dataset: dict[str, Any] = {
+        'default_scenario': '',
+        'default_freq_key': format_freq_key(FREQ_OPTIONS_GHZ[0]) if FREQ_OPTIONS_GHZ else '',
+        'measurement_order': [cfg['key'] for cfg in measurement_cfg],
+        'measurements': {
+            cfg['key']: {
+                'title': cfg['title'],
+                'description': cfg['description'],
+                'x_label': cfg['x_label'],
+                'y_label': cfg['y_label'],
+                'color': cfg['color'],
+                'background': cfg['background'],
+                'tension': cfg.get('tension', 0.25),
+            }
+            for cfg in measurement_cfg
+        },
+        'scenario_options': [],
+        'scenarios': {},
+    }
+
+    if not base_dir.exists():
         return dataset
 
-    for sheet in workbook.sheet_names:
-        try:
-            df = pd.read_excel(workbook, sheet_name=sheet, header=None)
-        except Exception as exc:  # pragma: no cover
-            print(f"[return-loss] gagal membaca sheet '{sheet}': {exc}")
-            continue
+    scenario_dirs = [path for path in base_dir.iterdir() if path.is_dir()]
+    scenario_dirs.sort(key=lambda item: item.name.lower())
 
-        df = df.iloc[:, :2].dropna()
-        if df.empty:
-            continue
-
-        pairs = [
-            (float(freq_val), float(rl_val))
-            for freq_val, rl_val in zip(df.iloc[:, 0], df.iloc[:, 1])
-        ]
-        pairs.sort(key=lambda item: item[0])
-
-        freq_axis = [freq for freq, _ in pairs]
-        return_loss = [rl for _, rl in pairs]
-        vswr = [s11_db_to_vswr(value) for value in return_loss]
-
-        try:
-            freq_numeric = float(sheet)
-        except ValueError:
-            freq_numeric = None
-
-        freq_key = format_freq_key(freq_numeric if freq_numeric is not None else sheet)
-
-        dataset[freq_key] = {
-            "freq_key": freq_key,
-            "freq_ghz": freq_numeric,
-            "frequency_axis": freq_axis,
-            "return_loss": return_loss,
-            "vswr": vswr,
-            "sheet": sheet,
+    for scenario_dir in scenario_dirs:
+        scenario_key = _slugify(scenario_dir.name)
+        freq_dirs = [path for path in scenario_dir.iterdir() if path.is_dir()]
+        freq_dirs.sort(key=lambda item: (_safe_float(item.name) is None, _safe_float(item.name) or 0.0, item.name))
+        scenario_entry: dict[str, Any] = {
+            'label': scenario_dir.name,
+            'frequencies': {},
+            'default_freq_key': '',
         }
 
-    return dataset
+        for freq_dir in freq_dirs:
+            freq_value = _safe_float(freq_dir.name)
+            freq_key = format_freq_key(freq_value if freq_value is not None else freq_dir.name)
+            freq_label = f"{freq_key} GHz" if freq_value is not None else freq_dir.name
+            freq_entry: dict[str, Any] = {
+                'label': freq_label,
+                'freq': freq_value,
+                'measurements': {},
+            }
 
+            for cfg in measurement_cfg:
+                file_path = _find_measurement_file(freq_dir, cfg['file_tokens'])
+                if file_path is None:
+                    continue
+                x_vals, y_vals = _parse_numeric_columns(file_path, cfg['column_indexes'])
+                if not x_vals or not y_vals:
+                    continue
+                freq_entry['measurements'][cfg['key']] = {
+                    'x': x_vals,
+                    'y': y_vals,
+                }
 
-def load_vswr_data(source: Path | str) -> dict[str, dict[str, list[float]]]:
-    """Read VSWR workbook and return chart data keyed by frequency string."""
+            if freq_entry['measurements']:
+                if not scenario_entry['default_freq_key']:
+                    scenario_entry['default_freq_key'] = freq_key
+                scenario_entry['frequencies'][freq_key] = freq_entry
 
-    dataset: dict[str, dict[str, list[float]]] = {}
-    workbook = _open_excel_workbook(source, "vswr")
-    if workbook is None:
-        return dataset
-
-    for sheet in workbook.sheet_names:
-        try:
-            df = pd.read_excel(workbook, sheet_name=sheet, header=None)
-        except Exception as exc:  # pragma: no cover
-            print(f"[vswr] gagal membaca sheet '{sheet}': {exc}")
-            continue
-
-        df = df.iloc[:, :2].dropna()
-        if df.empty:
-            continue
-
-        pairs = [
-            (float(freq_val), float(vswr_val))
-            for freq_val, vswr_val in zip(df.iloc[:, 0], df.iloc[:, 1])
-        ]
-        pairs.sort(key=lambda item: item[0])
-
-        freq_axis = [freq for freq, _ in pairs]
-        vswr_values = [value for _, value in pairs]
-
-        try:
-            freq_numeric = float(sheet)
-        except ValueError:
-            freq_numeric = None
-
-        freq_key = format_freq_key(freq_numeric if freq_numeric is not None else sheet)
-
-        dataset[freq_key] = {
-            "freq_key": freq_key,
-            "freq_ghz": freq_numeric,
-            "frequency_axis": freq_axis,
-            "vswr": vswr_values,
-            "sheet": sheet,
-        }
+        if scenario_entry['frequencies']:
+            dataset['scenarios'][scenario_key] = scenario_entry
+            dataset['scenario_options'].append({'key': scenario_key, 'label': scenario_dir.name})
+            if not dataset['default_scenario']:
+                dataset['default_scenario'] = scenario_key
 
     return dataset
 
 
-def load_chart_data(return_loss_source: Path | str, vswr_source: Path | str) -> dict[str, dict[str, list[float]]]:
-    """Combine return-loss and VSWR datasets for chart consumption."""
+AWR_MEASUREMENT_CONFIG = [
+    {
+        'key': 'return_loss',
+        'title': 'Return Loss (AWR)',
+        'description': 'Kurva S11 hasil ekspor AWR (Data RL*.txt).',
+        'x_label': 'Frekuensi (GHz)',
+        'y_label': 'Return Loss (dB)',
+        'color': 'rgba(37,99,235,1)',
+        'background': 'rgba(37,99,235,0.15)',
+        'file_tokens': ['rl'],
+        'column_indexes': (0, 1),
+    },
+    {
+        'key': 'vswr',
+        'title': 'VSWR (AWR)',
+        'description': 'Nilai VSWR dari file Data VSWR*.txt.',
+        'x_label': 'Frekuensi (GHz)',
+        'y_label': 'VSWR',
+        'color': 'rgba(16,185,129,1)',
+        'background': 'rgba(16,185,129,0.15)',
+        'file_tokens': ['vswr'],
+        'column_indexes': (0, 1),
+    },
+    {
+        'key': 'gain',
+        'title': 'Gain (AWR)',
+        'description': 'Distribusi |PPC TPwr| terhadap sudut (Data Gain*.txt).',
+        'x_label': 'Sudut (deg)',
+        'y_label': 'Gain (dB)',
+        'color': 'rgba(236,72,153,1)',
+        'background': 'rgba(236,72,153,0.15)',
+        'file_tokens': ['gain'],
+        'column_indexes': (0, 1),
+    },
+]
 
-    dataset = load_return_loss_data(return_loss_source)
-    vswr_dataset = load_vswr_data(vswr_source)
 
-    for freq_key, vswr_entry in vswr_dataset.items():
-        base = dataset.setdefault(
-            freq_key,
-            {
-                "freq_key": freq_key,
-                "freq_ghz": vswr_entry.get("freq_ghz"),
-                "frequency_axis": vswr_entry.get("frequency_axis", []),
-                "return_loss": [],
-                "vswr": [],
-                "sheet": vswr_entry.get("sheet"),
-            },
-        )
+CST_MEASUREMENT_CONFIG = [
+    {
+        'key': 'return_loss',
+        'title': 'Return Loss (CST)',
+        'description': 'Data S11 dari RL *.txt (CST).',
+        'x_label': 'Frekuensi (GHz)',
+        'y_label': 'Return Loss (dB)',
+        'color': 'rgba(59,130,246,1)',
+        'background': 'rgba(59,130,246,0.15)',
+        'file_tokens': ['rl'],
+        'column_indexes': (0, 1),
+    },
+    {
+        'key': 'vswr',
+        'title': 'VSWR (CST)',
+        'description': 'VSWR linear hasil simulasi CST.',
+        'x_label': 'Frekuensi (GHz)',
+        'y_label': 'VSWR',
+        'color': 'rgba(16,185,129,1)',
+        'background': 'rgba(16,185,129,0.15)',
+        'file_tokens': ['vswr'],
+        'column_indexes': (0, 1),
+    },
+    {
+        'key': 'gain',
+        'title': 'Gain (CST)',
+        'description': 'Abs(Gain) pada phi = 90 deg dari file Gain *.txt.',
+        'x_label': 'Theta (deg)',
+        'y_label': 'Gain (dBi)',
+        'color': 'rgba(249,115,22,1)',
+        'background': 'rgba(249,115,22,0.18)',
+        'file_tokens': ['gain'],
+        'column_indexes': (0, 2),
+    },
+    {
+        'key': 'polar',
+        'title': 'Polar (CST)',
+        'description': 'Abs(Gain) pada phi = 0 deg dari file Polar *.txt.',
+        'x_label': 'Theta (deg)',
+        'y_label': 'Gain (dBi)',
+        'color': 'rgba(14,165,233,1)',
+        'background': 'rgba(14,165,233,0.15)',
+        'file_tokens': ['polar'],
+        'column_indexes': (0, 2),
+    },
+]
 
-        base["vswr"] = vswr_entry.get("vswr", [])
-        if not base.get("frequency_axis"):
-            base["frequency_axis"] = vswr_entry.get("frequency_axis", [])
-        if base.get("freq_ghz") is None:
-            base["freq_ghz"] = vswr_entry.get("freq_ghz")
 
-    return dataset
+def load_awr_chart_data(base_dir: Path) -> dict[str, Any]:
+    return _load_measurement_dataset(base_dir, AWR_MEASUREMENT_CONFIG)
 
 
-RETURN_LOSS_DATA = load_chart_data(RETURN_LOSS_URL, VSWR_URL)
+def load_cst_chart_data(base_dir: Path) -> dict[str, Any]:
+    return _load_measurement_dataset(base_dir, CST_MEASUREMENT_CONFIG)
+
+
+AWR_CHART_DATA = load_awr_chart_data(BASE_DIR / 'AWR')
+CST_CHART_DATA = load_cst_chart_data(BASE_DIR / 'CST')
+
 
 
 @dataclass
@@ -449,7 +472,6 @@ def calculator():
     safe_freq = selected_freq if selected_freq in FREQ_OPTIONS_GHZ else FREQ_OPTIONS_GHZ[0]
     svg_results = results if results is not None else compute_all(safe_freq)
     show_svg_labels = results is not None
-    selected_freq_key = format_freq_key(safe_freq)
 
     return render_template(
         "index.html",
@@ -460,8 +482,8 @@ def calculator():
         svg_results=svg_results,
         show_svg_labels=show_svg_labels,
         error=error,
-        return_loss_data=RETURN_LOSS_DATA,
-        selected_freq_key=selected_freq_key,
+        awr_chart_data=AWR_CHART_DATA,
+        cst_chart_data=CST_CHART_DATA,
     )
 
 
