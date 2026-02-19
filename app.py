@@ -380,8 +380,9 @@ def solve_w_h_for_z0(er: float, z0: float, tol: float = 1e-6, max_iter: int = 12
 # =========================
 
 def patch_width(c: float, f_hz: float, er: float) -> float:
-    """Patch width (rectangular) - formula umum."""
-    return (c / (2 * f_hz)) * math.sqrt((er + 1) / 2)
+    """Patch width (rectangular) - corrected formula."""
+    # Wp = (c / (2*f)) * sqrt(2/(er+1))
+    return (c / (2 * f_hz)) * math.sqrt(2 / (er + 1))
 
 
 def patch_length(c: float, f_hz: float, er: float, h_m: float, w_m: float) -> tuple[float, float]:
@@ -429,7 +430,7 @@ def compute_all(freq_ghz: float) -> Results:
             b
             - 1
             - math.log(2 * b - 1)
-            + ((ER - 1) / (2 * ER)) * (math.log(b - 1) + 0.039 - 0.61 / ER)
+            + ((ER - 1) / (2 * ER)) * (math.log(b - 1) + 0.39 - 0.61 / ER)
         )
     except ValueError:
         w_h_line = float("nan")
