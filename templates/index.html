@@ -61,7 +61,7 @@
         <div class="card-divider"></div>
         <div class="card-header">
           <h2>Output Spesifikasi</h2>
-          <p>Wp, Lp, Wg, Lg, Wf, Lf</p>
+          <p>Wp, Lp, Wg, Lg, Wf, Lf, lambda0</p>
         </div>
         {% if results %}
           <div class="table">
@@ -71,6 +71,7 @@
             <div class="row"><div>Lg (mm)</div><div>{{ '%.2f'|format(results.lg_mm) }}</div></div>
             <div class="row"><div>Wf (mm)</div><div>{{ '%.2f'|format(results.wf_mm) }}</div></div>
             <div class="row"><div>Lf (mm)</div><div>{{ '%.2f'|format(results.lf_mm) }}</div></div>
+            <div class="row"><div>lambda0 (mm)</div><div>{{ '%.2f'|format(results.lambda0_mm) }}</div></div>
             <div class="row subtle"><div>εeff (patch)</div><div>{{ '%.4f'|format(results.eps_eff_patch) }}</div></div>
             <div class="row subtle"><div>εeff (feedline)</div><div>{{ '%.4f'|format(results.eps_eff_line) }}</div></div>
           </div>

@@ -17,7 +17,9 @@ ER = 4.4         # FR-4 (umum)
 H_MM = 1.6       # mm
 Z0_OHM = 50.0    # ohm
 
-PATCH_WIDTH_SCALE = 2.0  # scale patch width (visual requirement)
+# Mode bilangan untuk rumus resonansi fo (default: mode dominan TM10)
+MODE_M = 1
+MODE_N = 0
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -286,6 +288,7 @@ class Results:
     lf_mm: float
     eps_eff_patch: float
     eps_eff_line: float
+    lambda0_mm: float
 
 
 # =========================
@@ -378,17 +381,37 @@ def solve_w_h_for_z0(er: float, z0: float, tol: float = 1e-6, max_iter: int = 12
 
 def patch_width(c: float, f_hz: float, er: float) -> float:
     """Patch width (rectangular) - formula umum."""
-    return (c / (2 * f_hz)) * math.sqrt(2 / (er + 1))
+    return (c / (2 * f_hz)) * math.sqrt((er + 1) / 2)
 
 
 def patch_length(c: float, f_hz: float, er: float, h_m: float, w_m: float) -> tuple[float, float]:
     """Patch length (rectangular) - formula umum."""
-    w_h = w_m / h_m
+    if h_m <= 0:
+        return float("nan"), float("nan")
+
+    w_h = w_m / h_m if h_m > 0 else float("nan")
     eps_eff = eps_eff_hammerstad(er, w_h)
 
-    delta_l = 0.412 * h_m * ((eps_eff + 0.3) * (w_h + 0.264)) / ((eps_eff - 0.258) * (w_h + 0.8))
-    leff = c / (2 * f_hz * math.sqrt(eps_eff))
-    L = leff - 2 * delta_l
+    sqrt_eps = math.sqrt(eps_eff) if not math.isnan(eps_eff) and eps_eff > 0 else float("nan")
+    leff = float("nan")
+    if not math.isnan(sqrt_eps):
+        freq_factor_sq = ((2 * f_hz * sqrt_eps) / c) ** 2
+        n_term = 0.0
+        if MODE_N and w_m > 0:
+            n_term = (MODE_N / w_m) ** 2
+        denom = freq_factor_sq - n_term
+        if MODE_M > 0 and denom > 0:
+            leff = MODE_M / math.sqrt(denom)
+
+    delta_l = float("nan")
+    if not math.isnan(w_h) and w_h > 0 and not math.isnan(eps_eff):
+        denom_delta = (eps_eff - 0.258) * (w_h + 0.8)
+        if denom_delta != 0:
+            delta_l = 0.412 * h_m * ((eps_eff + 0.3) * (w_h + 0.264)) / denom_delta
+
+    L = float("nan")
+    if not math.isnan(leff) and not math.isnan(delta_l):
+        L = leff - 2 * delta_l
 
     return L, eps_eff
 
@@ -397,17 +420,26 @@ def compute_all(freq_ghz: float) -> Results:
     f_hz = freq_ghz * 1e9
     h_m = H_MM * 1e-3
 
-    wp_m = patch_width(C, f_hz, ER) * PATCH_WIDTH_SCALE
+    wp_m = patch_width(C, f_hz, ER)
     lp_m, eps_patch = patch_length(C, f_hz, ER, h_m, wp_m)
 
-    w_h_line = microstrip_w_h_for_z0(ER, Z0_OHM)
+    b = (377 * math.pi) / (2 * Z0_OHM * math.sqrt(ER))
+    try:
+        w_h_line = (2 / math.pi) * (
+            b
+            - 1
+            - math.log(2 * b - 1)
+            + ((ER - 1) / (2 * ER)) * (math.log(b - 1) + 0.039 - 0.61 / ER)
+        )
+    except ValueError:
+        w_h_line = float("nan")
     if math.isnan(w_h_line) or w_h_line <= 0:
         w_h_line = solve_w_h_for_z0(ER, Z0_OHM)
     wf_m = w_h_line * h_m
     eps_line = eps_eff_hammerstad(ER, w_h_line)
 
-    lambda_g = C / (f_hz * math.sqrt(eps_line))
-    lf_m = 0.25 * lambda_g
+    lambda0 = C / f_hz
+    lf_m = lambda0 / 10.0
 
     wg_m = wp_m + 6 * h_m
     lg_m = lp_m + lf_m + 6 * h_m
@@ -423,6 +455,7 @@ def compute_all(freq_ghz: float) -> Results:
         lf_mm=lf_m * to_mm,
         eps_eff_patch=eps_patch,
         eps_eff_line=eps_line,
+        lambda0_mm=lambda0 * to_mm,
     )
 
 
