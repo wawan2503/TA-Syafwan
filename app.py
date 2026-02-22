@@ -195,12 +195,6 @@ def load_radiation_pattern_images(base_dir: Path, freq_options: list[float]) -> 
         freq_alias_index[key] = sorted(_freq_match_aliases(freq), key=len, reverse=True)
 
     dataset['folder'] = str(image_dir.relative_to(base_dir)).replace('\\', '/')
-    static_image_prefix = ''
-    try:
-        static_image_prefix = str(image_dir.relative_to(base_dir / 'static')).replace('\\', '/')
-    except ValueError:
-        static_image_prefix = ''
-
     for candidate in sorted(image_dir.rglob('*')):
         if not candidate.is_file():
             continue
@@ -219,10 +213,10 @@ def load_radiation_pattern_images(base_dir: Path, freq_options: list[float]) -> 
                 break
 
         rel_path_posix = str(rel_path).replace('\\', '/')
-        if static_image_prefix:
-            image_url = f"/static/{quote(f'{static_image_prefix}/{rel_path_posix}')}"
-        else:
-            image_url = f"/radiation-pattern-image/{quote(rel_path_posix)}"
+        # Route images through Flask instead of `/static/...` so deployment
+        # platforms (e.g. Vercel) don't need to resolve nested static paths
+        # with spaces via their own static file handler.
+        image_url = f"/radiation-pattern-image/{quote(rel_path_posix)}"
         source_key, scenario_key = _infer_radiation_source_scenario(rel_path.parts)
         image_roles = _infer_radiation_image_roles(normalized_name, source_key)
         if not image_roles:
