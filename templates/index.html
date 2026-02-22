@@ -112,6 +112,7 @@
                   <p>{{ meta.description }}</p>
                 </div>
                 <div class="chart-holder is-empty" data-chart-holder="awr-{{ measure_key }}">
+                  <img class="chart-image" alt="{{ meta.title }}" loading="lazy" />
                   <canvas id="awr-{{ measure_key }}-chart" aria-label="{{ meta.title }}"></canvas>
                   <div class="chart-empty">Data belum tersedia untuk kombinasi ini.</div>
                 </div>
@@ -173,6 +174,7 @@
                   <p>{{ meta.description }}</p>
                 </div>
                 <div class="chart-holder is-empty" data-chart-holder="cst-{{ measure_key }}">
+                  <img class="chart-image" alt="{{ meta.title }}" loading="lazy" />
                   <canvas id="cst-{{ measure_key }}-chart" aria-label="{{ meta.title }}"></canvas>
                   <div class="chart-empty">Data belum tersedia untuk kombinasi ini.</div>
                 </div>
@@ -197,6 +199,7 @@
       }
       const awrDataset = {{ awr_chart_data | tojson | safe }};
       const cstDataset = {{ cst_chart_data | tojson | safe }};
+      const radiationPatternImages = {{ radiation_pattern_images | tojson | safe }};
       const freqSelect = document.querySelector('select[name="freq"]');
       const keyFromValue = (value) => {
         if (value === null || value === undefined || value === '') {
@@ -215,6 +218,31 @@
         }
         return parseFloat(num.toFixed(2)).toString();
       };
+      const resolveRadiationPatternImageUrl = (groupKey, scenarioKey, measureKey, freqEntry) => {
+        if (!freqEntry) {
+          return '';
+        }
+        const panelKey = `${groupKey}_${measureKey}`;
+        const imageEnabledPanels = new Set(['awr_gain', 'cst_polar']);
+        if (!imageEnabledPanels.has(panelKey)) {
+          return '';
+        }
+        const freqKey = keyFromValue(freqEntry.freq);
+        if (!freqKey) {
+          return '';
+        }
+        const freqBucket = radiationPatternImages?.frequencies?.[freqKey];
+        const scopedFreqBucket = radiationPatternImages?.sources?.[groupKey]?.[scenarioKey]?.[freqKey];
+        return (
+          scopedFreqBucket?.[panelKey]
+          || scopedFreqBucket?.[measureKey]
+          || scopedFreqBucket?.default
+          || freqBucket?.[panelKey]
+          || freqBucket?.[measureKey]
+          || freqBucket?.default
+          || ''
+        );
+      };
       const initChartGroup = ({ dataset, scenarioSelectId, freqLabelId, groupKey }) => {
         if (!dataset || !Array.isArray(dataset.measurement_order) || dataset.measurement_order.length === 0) {
           return;
@@ -232,6 +260,7 @@
           const key = scenarioSelect.value || dataset.default_scenario;
           return dataset.scenarios[key] || dataset.scenarios[dataset.default_scenario];
         };
+        const getScenarioKey = () => scenarioSelect.value || dataset.default_scenario;
         const resolveFreqEntry = (scenarioEntry) => {
           if (!scenarioEntry) {
             return null;
@@ -275,6 +304,7 @@
           },
         });
         const updateCharts = () => {
+          const scenarioKey = getScenarioKey();
           const scenarioEntry = getScenarioEntry();
           const freqEntry = resolveFreqEntry(scenarioEntry);
           if (freqLabel) {
@@ -284,9 +314,28 @@
             const meta = dataset.measurements?.[measureKey];
             const holder = document.querySelector(`[data-chart-holder="${groupKey}-${measureKey}"]`);
             const canvas = document.getElementById(`${groupKey}-${measureKey}-chart`);
+            const imageEl = holder ? holder.querySelector('.chart-image') : null;
             if (!meta || !holder || !canvas) {
               return;
             }
+            holder.classList.remove('is-image');
+
+            const imageUrl = resolveRadiationPatternImageUrl(groupKey, scenarioKey, measureKey, freqEntry);
+            if (imageEl && imageUrl) {
+              if (charts[measureKey]) {
+                charts[measureKey].destroy();
+                charts[measureKey] = null;
+              }
+              imageEl.src = imageUrl;
+              imageEl.alt = `${meta.title || 'Pola Radiasi'} - ${freqEntry?.label || ''}`.trim();
+              holder.classList.remove('is-empty');
+              holder.classList.add('is-image');
+              return;
+            }
+            if (imageEl) {
+              imageEl.removeAttribute('src');
+            }
+
             const measurementEntry = freqEntry?.measurements?.[measureKey];
             if (!measurementEntry || !Array.isArray(measurementEntry.x) || measurementEntry.x.length === 0) {
               holder.classList.add('is-empty');

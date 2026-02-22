@@ -608,12 +608,29 @@ input[disabled]{ opacity: .8; cursor: not-allowed; }
   font-size: 12px;
   color: var(--muted);
 }
+.chart-holder .chart-image{
+  display: none;
+  width: 100%;
+  height: auto;
+  max-height: 420px;
+  object-fit: contain;
+  border-radius: 10px;
+  border: 1px solid rgba(15,23,42,.08);
+  background: #fff;
+}
 
 .chart-holder.is-empty canvas{
   display: none;
 }
 
 .chart-holder.is-empty .chart-empty{
+  display: block;
+}
+.chart-holder.is-image canvas,
+.chart-holder.is-image .chart-empty{
+  display: none;
+}
+.chart-holder.is-image .chart-image{
   display: block;
 }
 .chart-holder{

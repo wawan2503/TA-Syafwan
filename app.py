@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
+from urllib.parse import quote
 
-from flask import Flask, render_template, request
+from flask import Flask, abort, render_template, request, send_from_directory
 
 app = Flask(__name__)
 
@@ -22,6 +24,7 @@ MODE_M = 1
 MODE_N = 0
 
 BASE_DIR = Path(__file__).resolve().parent
+RADIATION_IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif'}
 
 
 def format_freq_key(value: float | str) -> str:
@@ -54,11 +57,199 @@ def _safe_float(value: str | float | int | None) -> Optional[float]:
         return None
 
 
+def _normalize_match_text(text: str) -> str:
+    return re.sub(r'[^a-z0-9]+', '', text.lower())
+
+
 def _slugify(text: str) -> str:
     cleaned = ''.join(ch if ch.isalnum() else '-' for ch in text.lower())
     while '--' in cleaned:
         cleaned = cleaned.replace('--', '-')
     return cleaned.strip('-') or 'default'
+
+
+def _find_radiation_pattern_dir(base_dir: Path) -> Optional[Path]:
+    candidate_names = [
+        ('static', 'pola radiasi'),
+        ('static', 'pola_radiasi'),
+        ('static', 'pola-radiasi'),
+        ('pola radiasi',),
+        ('pola_radiasi',),
+        ('pola-radiasi',),
+        ('Pola Radiasi',),
+    ]
+    for parts in candidate_names:
+        candidate = base_dir.joinpath(*parts)
+        if candidate.is_dir():
+            return candidate
+
+    # Fallback: scan root-level folders with "pola" and "radiasi" in the name.
+    for candidate in sorted(base_dir.iterdir(), key=lambda item: item.name.lower()):
+        if not candidate.is_dir():
+            continue
+        normalized = _normalize_match_text(candidate.name)
+        if 'pola' in normalized and 'radiasi' in normalized:
+            return candidate
+    return None
+
+
+def _infer_radiation_source_scenario(parts: tuple[str, ...]) -> tuple[str, str]:
+    source_key = ''
+    scenario_key = ''
+    normalized_parts = [_normalize_match_text(part) for part in parts]
+
+    for part in normalized_parts:
+        if not source_key:
+            if 'awr' in part:
+                source_key = 'awr'
+            elif 'cst' in part:
+                source_key = 'cst'
+
+        if scenario_key:
+            continue
+        # Support abbreviated Indonesian folder names such as "sblm optimal".
+        has_sebelum = any(token in part for token in ('sebelum', 'sblm', 'before'))
+        has_opt = any(token in part for token in ('optimal', 'optimasi', 'optimi'))
+        if has_sebelum and has_opt:
+            scenario_key = 'sebelum-optimal'
+        elif has_opt:
+            scenario_key = 'optimal'
+
+    return source_key, scenario_key
+
+
+def _infer_radiation_image_roles(normalized_name: str, source_key: str) -> list[str]:
+    """Map radiation-pattern images to chart panels (gain/polar) for AWR/CST."""
+    has_gain = 'gain' in normalized_name
+    has_polar = 'polar' in normalized_name
+
+    roles: list[str] = []
+
+    # Folder "pola radiasi" is used as the image source for gain/polar panels.
+    # If the file is already scoped to AWR/CST, expose it to the relevant panels
+    # even when the filename itself does not contain "gain"/"polar".
+    if source_key == 'awr':
+        roles.extend(['awr_gain', 'gain'])
+        if has_polar:
+            roles.extend(['awr_polar', 'polar'])
+    elif source_key == 'cst':
+        roles.extend(['cst_gain', 'gain', 'cst_polar', 'polar'])
+    else:
+        if has_gain:
+            roles.append('gain')
+        if has_polar:
+            roles.append('polar')
+
+    # Preserve old behavior for explicit labels while keeping order stable.
+    if has_gain and source_key == 'cst':
+        roles.insert(0, 'cst_gain')
+    if has_gain and source_key == 'awr':
+        roles.insert(0, 'awr_gain')
+    if has_polar and source_key == 'cst':
+        roles.insert(0, 'cst_polar')
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for role in roles:
+        if role and role not in seen:
+            deduped.append(role)
+            seen.add(role)
+    return deduped
+
+
+def _freq_match_aliases(freq: float) -> set[str]:
+    key = format_freq_key(freq)
+    aliases = {
+        _normalize_match_text(key),
+        _normalize_match_text(f"{key}ghz"),
+    }
+    if '.' in key:
+        aliases.add(_normalize_match_text(key.replace('.', '_')))
+        aliases.add(_normalize_match_text(key.replace('.', '-')))
+        no_dot = key.replace('.', '')
+        aliases.add(_normalize_match_text(no_dot))
+        if len(key.split('.', 1)[1]) <= 2:
+            mhz = int(round(float(freq) * 1000))
+            aliases.add(_normalize_match_text(f"{mhz}mhz"))
+            aliases.add(_normalize_match_text(str(mhz)))
+    return {alias for alias in aliases if alias}
+
+
+def load_radiation_pattern_images(base_dir: Path, freq_options: list[float]) -> dict[str, Any]:
+    dataset: dict[str, Any] = {
+        'folder': '',
+        'frequencies': {},
+        'sources': {
+            'awr': {},
+            'cst': {},
+        },
+    }
+
+    image_dir = _find_radiation_pattern_dir(base_dir)
+    if image_dir is None:
+        return dataset
+
+    freq_alias_index: dict[str, list[str]] = {}
+    for freq in freq_options:
+        key = format_freq_key(freq)
+        freq_alias_index[key] = sorted(_freq_match_aliases(freq), key=len, reverse=True)
+
+    dataset['folder'] = str(image_dir.relative_to(base_dir)).replace('\\', '/')
+
+    for candidate in sorted(image_dir.rglob('*')):
+        if not candidate.is_file():
+            continue
+        if candidate.suffix.lower() not in RADIATION_IMAGE_EXTENSIONS:
+            continue
+
+        rel_path = candidate.relative_to(image_dir)
+        normalized_name = _normalize_match_text(str(rel_path))
+        if not normalized_name:
+            continue
+
+        matched_freq_keys: list[str] = []
+        for freq_key, aliases in freq_alias_index.items():
+            if any(alias in normalized_name for alias in aliases):
+                matched_freq_keys.append(freq_key)
+                break
+
+        rel_path_posix = str(rel_path).replace('\\', '/')
+        image_url = f"/radiation-pattern-image/{quote(rel_path_posix)}"
+        source_key, scenario_key = _infer_radiation_source_scenario(rel_path.parts)
+        image_roles = _infer_radiation_image_roles(normalized_name, source_key)
+        if not image_roles:
+            image_roles = ['default']
+
+        # If frequency is not encoded in the filename/path, treat the image as a
+        # generic fallback for all configured frequencies.
+        if not matched_freq_keys:
+            matched_freq_keys = list(freq_alias_index.keys())
+            if not matched_freq_keys:
+                continue
+
+        for freq_key_match in matched_freq_keys:
+            freq_bucket = dataset['frequencies'].setdefault(freq_key_match, {})
+            # Prefer the first match per role to keep output stable.
+            for role in image_roles:
+                if role not in freq_bucket:
+                    freq_bucket[role] = image_url
+            if 'default' not in freq_bucket:
+                freq_bucket['default'] = image_url
+
+            if source_key and scenario_key:
+                scoped_freq_bucket = (
+                    dataset['sources']
+                    .setdefault(source_key, {})
+                    .setdefault(scenario_key, {})
+                    .setdefault(freq_key_match, {})
+                )
+                for role in image_roles:
+                    if role not in scoped_freq_bucket:
+                        scoped_freq_bucket[role] = image_url
+                if 'default' not in scoped_freq_bucket:
+                    scoped_freq_bucket['default'] = image_url
+
+    return dataset
 
 
 def _line_looks_numeric(text: str) -> bool:
@@ -238,17 +429,6 @@ CST_MEASUREMENT_CONFIG = [
         'background': 'rgba(16,185,129,0.15)',
         'file_tokens': ['vswr'],
         'column_indexes': (0, 1),
-    },
-    {
-        'key': 'gain',
-        'title': 'Gain (CST)',
-        'description': 'Abs(Gain) pada phi = 90 deg dari file Gain *.txt.',
-        'x_label': 'Theta (deg)',
-        'y_label': 'Gain (dBi)',
-        'color': 'rgba(249,115,22,1)',
-        'background': 'rgba(249,115,22,0.18)',
-        'file_tokens': ['gain'],
-        'column_indexes': (0, 2),
     },
     {
         'key': 'polar',
@@ -470,6 +650,24 @@ def _parse_freq_from_query(default_freq: float) -> float:
     return default_freq
 
 
+@app.route("/radiation-pattern-image/<path:relpath>", methods=["GET"])
+def radiation_pattern_image(relpath: str):
+    image_dir = _find_radiation_pattern_dir(BASE_DIR)
+    if image_dir is None:
+        abort(404)
+
+    try:
+        resolved = (image_dir / relpath).resolve()
+        resolved.relative_to(image_dir.resolve())
+    except Exception:
+        abort(404)
+
+    if not resolved.is_file():
+        abort(404)
+
+    return send_from_directory(str(image_dir), relpath)
+
+
 @app.route("/", methods=["GET"])
 def landing():
     selected_freq = _parse_freq_from_query(FREQ_OPTIONS_GHZ[0])
@@ -518,6 +716,7 @@ def calculator():
         error=error,
         awr_chart_data=AWR_CHART_DATA,
         cst_chart_data=CST_CHART_DATA,
+        radiation_pattern_images=load_radiation_pattern_images(BASE_DIR, FREQ_OPTIONS_GHZ),
     )
 
 
