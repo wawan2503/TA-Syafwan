@@ -397,7 +397,7 @@ AWR_MEASUREMENT_CONFIG = [
     },
     {
         'key': 'gain',
-        'title': 'Gain (AWR)',
+        'title': 'Gain dan Pola Radiasi (AWR)',
         'description': 'Distribusi |PPC TPwr| terhadap sudut (Data Gain*.txt).',
         'x_label': 'Sudut (deg)',
         'y_label': 'Gain (dB)',
@@ -434,7 +434,7 @@ CST_MEASUREMENT_CONFIG = [
     },
     {
         'key': 'polar',
-        'title': 'Polar (CST)',
+        'title': 'Gain dan Pola Radiasi (CST)',
         'description': 'Abs(Gain) pada phi = 0 deg dari file Polar *.txt.',
         'x_label': 'Theta (deg)',
         'y_label': 'Gain (dBi)',
