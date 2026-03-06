@@ -7,7 +7,14 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 from urllib.parse import quote
 
-from flask import Flask, abort, render_template, request, send_from_directory
+from flask import Flask, abort, render_template, request, send_from_directory, Response
+import io
+import base64
+import pandas as pd
+import numpy as np
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 app = Flask(__name__)
 
@@ -650,6 +657,135 @@ def _parse_freq_from_query(default_freq: float) -> float:
     except Exception:
         pass
     return default_freq
+
+
+def _resolve_awr_gain_file(freq_ghz: float, scenario_key: str) -> Optional[Path]:
+    """Find the AWR Data Gain file for a given frequency and scenario.
+    scenario_key accepts values like 'optimal' or 'sebelum-optimal'.
+    """
+    awr_root = BASE_DIR / 'AWR'
+    if not awr_root.exists():
+        return None
+
+    # Map scenario slug to real directory name (case-insensitive match)
+    wanted_slug = _slugify(scenario_key)
+    scenario_dir: Optional[Path] = None
+    for cand in awr_root.iterdir():
+        if not cand.is_dir():
+            continue
+        if _slugify(cand.name) == wanted_slug:
+            scenario_dir = cand
+            break
+    if scenario_dir is None:
+        # Fallback to 'optimal' if requested not found
+        for cand in awr_root.iterdir():
+            if cand.is_dir() and _slugify(cand.name) == 'optimal':
+                scenario_dir = cand
+                break
+    if scenario_dir is None:
+        return None
+
+    # Find subfolder matching frequency (e.g., '2.4')
+    freq_dir: Optional[Path] = None
+    for cand in scenario_dir.iterdir():
+        if not cand.is_dir():
+            continue
+        val = _safe_float(cand.name)
+        if val is None:
+            continue
+        if abs(val - float(freq_ghz)) < 1e-6:
+            freq_dir = cand
+            break
+    if freq_dir is None:
+        return None
+
+    # Inside frequency folder, find a file that includes 'gain'
+    path = _find_measurement_file(freq_dir, tokens=('gain',))
+    return path
+
+
+def _render_polar_png_from_gain(path: Path, title_label: str = "DB(|PPC_TPwr(0,1)|)[*] Rancangan") -> bytes:
+    """Read AWR gain data with pandas and render a Matplotlib polar PNG.
+    - Expects 2 columns: angle(deg) and gain(dB).
+    - Skips the header line.
+    - Follows the requested visual spec (north=0, clockwise, grids, markers).
+    """
+    # Read with pandas, robust to tabs/spaces, skip header
+    df = pd.read_csv(
+        path,
+        sep=r"\s+",
+        engine="python",
+        header=None,
+        names=["angle_deg", "gain_db"],
+        skiprows=1,
+        decimal='.',
+        dtype={"angle_deg": float, "gain_db": float},
+    )
+
+    df = df.dropna(subset=["angle_deg", "gain_db"]).copy()
+
+    angles_deg = df["angle_deg"].to_numpy(dtype=float)
+    gains_db = df["gain_db"].to_numpy(dtype=float)
+    thetas = np.deg2rad(angles_deg)
+
+    # Create polar plot
+    fig, ax = plt.subplots(subplot_kw={"projection": "polar"}, figsize=(6, 6), dpi=150)
+    ax.set_theta_zero_location('N')  # 0 deg at north
+    ax.set_theta_direction(-1)       # clockwise
+
+    # Radial limits and grid every 5 dB
+    rmin = -15.0
+    max_gain = float(np.nanmax(gains_db)) if gains_db.size else 5.0
+    rmax = max(10.0, (np.ceil(max_gain / 5.0) * 5.0))
+    ax.set_ylim(rmin, rmax)
+
+    # Grid styling (contrasting color, transparent)
+    ax.grid(True, color='cyan', alpha=0.3, linewidth=0.8)
+    radii = np.arange(rmin, rmax + 0.1, 5.0)
+    try:
+        rticks, rgrid = ax.set_rgrids(radii, angle=90.0)
+        for t in rticks:
+            t.set_color('cyan')
+    except Exception:
+        pass
+
+    # Plot data: blue solid line
+    ax.plot(thetas, gains_db, color='blue', linewidth=2.0, label=title_label)
+
+    # Markers every 10 degrees (approx)
+    div = angles_deg / 10.0
+    mask = np.isclose(div, np.round(div), atol=1e-2)
+    if np.any(mask):
+        ax.plot(thetas[mask], gains_db[mask], '^', color='blue', markersize=4, linestyle='None')
+
+    ax.legend(loc='upper right', bbox_to_anchor=(1.15, 1.05), framealpha=0.9)
+    ax.set_title("Pola Radiasi (Polar)")
+
+    # Render to PNG bytes
+    buf = io.BytesIO()
+    fig.tight_layout()
+    fig.canvas.draw()
+    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    return buf.getvalue()
+
+
+@app.route("/mpl_polar.png", methods=["GET"])
+def mpl_polar_png():
+    """Return a dynamically generated polar plot PNG from AWR Data Gain.
+    Query params:
+      - freq: frequency in GHz (e.g., 2.4)
+      - scenario: 'optimal' or 'sebelum-optimal'
+    """
+    freq = _parse_freq_from_query(FREQ_OPTIONS_GHZ[0])
+    scenario = request.args.get('scenario') or 'optimal'
+
+    path = _resolve_awr_gain_file(freq, scenario)
+    if path is None:
+        abort(404)
+
+    png_bytes = _render_polar_png_from_gain(path)
+    return Response(png_bytes, mimetype='image/png')
 
 
 @app.route("/radiation-pattern-image/<path:relpath>", methods=["GET"])

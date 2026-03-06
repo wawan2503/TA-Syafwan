@@ -81,6 +81,29 @@
       </form>
       <div class="card chart-card">
         <div class="card-header">
+          <h2>Pola Radiasi (Matplotlib)</h2>
+          <p>Grafik polar dibuat langsung dari file AWR Data Gain (*.txt) menggunakan pandas, numpy, dan matplotlib.</p>
+        </div>
+        <div class="chart-filters">
+          <label>
+            <span>Mode data</span>
+            <select id="mplScenarioSelect"{% if not awr_chart_data.scenario_options %} disabled{% endif %}>
+              {% if awr_chart_data.scenario_options %}
+                {% for option in awr_chart_data.scenario_options %}
+                  <option value="{{ option.key }}"{% if option.key == awr_chart_data.default_scenario %} selected{% endif %}>{{ option.label }}</option>
+                {% endfor %}
+              {% else %}
+                <option>Data belum tersedia</option>
+              {% endif %}
+            </select>
+          </label>
+        </div>
+        <div class="chart-holder is-image" style="min-height: 420px;">
+          <img id="mplPolarImg" class="chart-image" alt="Pola Radiasi (Matplotlib)" loading="lazy" />
+        </div>
+      </div>
+      <div class="card chart-card">
+        <div class="card-header">
           <h2>Grafik AWR</h2>
           <p>Data diambil langsung dari folder <code>AWR</code> (optimal &amp; sebelum optimal).</p>
         </div>
@@ -379,6 +402,21 @@
       };
       initChartGroup({ dataset: awrDataset, scenarioSelectId: 'awrScenarioSelect', freqLabelId: 'awrFreqLabel', groupKey: 'awr' });
       initChartGroup({ dataset: cstDataset, scenarioSelectId: 'cstScenarioSelect', freqLabelId: 'cstFreqLabel', groupKey: 'cst' });
+
+      // Matplotlib polar image (dynamic, from Python, not static file)
+      const mplImg = document.getElementById('mplPolarImg');
+      const mplScenarioSelect = document.getElementById('mplScenarioSelect');
+      const updateMplImg = () => {
+        if (!mplImg) return;
+        const freq = freqSelect ? (freqSelect.value || '{{ '%.1f'|format(selected_freq) }}') : '{{ '%.1f'|format(selected_freq) }}';
+        const scenario = mplScenarioSelect ? (mplScenarioSelect.value || (awrDataset?.default_scenario || 'optimal')) : (awrDataset?.default_scenario || 'optimal');
+        const ts = Date.now(); // cache-bust
+        mplImg.src = `/mpl_polar.png?freq=${encodeURIComponent(freq)}&scenario=${encodeURIComponent(scenario)}&t=${ts}`;
+        mplImg.alt = `Pola Radiasi (Matplotlib) - ${freq} GHz (${scenario})`;
+      };
+      if (mplScenarioSelect) mplScenarioSelect.addEventListener('change', updateMplImg);
+      if (freqSelect) freqSelect.addEventListener('change', updateMplImg);
+      updateMplImg();
     })();
   </script>
 
