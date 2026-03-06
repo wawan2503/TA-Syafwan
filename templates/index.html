@@ -100,6 +100,7 @@
         </div>
         <div class="chart-holder is-image" style="min-height: 420px;">
           <img id="mplPolarImg" class="chart-image" alt="Pola Radiasi (Matplotlib)" loading="lazy" />
+          <canvas id="mplPolarOverlay" style="display:block; position:absolute; left:16px; right:16px; top:16px; bottom:16px; background:transparent; pointer-events:auto;"></canvas>
         </div>
       </div>
       <div class="card chart-card">
@@ -406,6 +407,8 @@
       // Matplotlib polar image (dynamic, from Python, not static file)
       const mplImg = document.getElementById('mplPolarImg');
       const mplScenarioSelect = document.getElementById('mplScenarioSelect');
+      const mplOverlay = document.getElementById('mplPolarOverlay');
+      let mplOverlayChart = null;
       const updateMplImg = () => {
         if (!mplImg) return;
         const freq = freqSelect ? (freqSelect.value || '{{ '%.1f'|format(selected_freq) }}') : '{{ '%.1f'|format(selected_freq) }}';
@@ -417,6 +420,68 @@
       if (mplScenarioSelect) mplScenarioSelect.addEventListener('change', updateMplImg);
       if (freqSelect) freqSelect.addEventListener('change', updateMplImg);
       updateMplImg();
+
+      // Build invisible Chart.js radar overlay for tooltips only
+      const buildMplOverlay = async () => {
+        if (!mplOverlay || typeof window.Chart === 'undefined') return;
+        const freq = freqSelect ? (freqSelect.value || '{{ '%.1f'|format(selected_freq) }}') : '{{ '%.1f'|format(selected_freq) }}';
+        const scenario = mplScenarioSelect ? (mplScenarioSelect.value || (awrDataset?.default_scenario || 'optimal')) : (awrDataset?.default_scenario || 'optimal');
+        const res = await fetch(`/mpl_polar_data?freq=${encodeURIComponent(freq)}&scenario=${encodeURIComponent(scenario)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const labels = (data.angle_deg || []).map(v => `${v}\u00B0`);
+        const gains = data.gain_db || [];
+        const metaTitle = data.label || 'Gain (dB)';
+
+        const opts = {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                title: (items) => items && items.length ? `Angle: ${labels[items[0].dataIndex]}` : '',
+                label: (item) => `${metaTitle}: ${Number(item.raw).toFixed(3)} dB`,
+              },
+            },
+          },
+          scales: {
+            r: {
+              angleLines: { display: false },
+              grid: { display: false },
+              ticks: { display: false },
+              pointLabels: { display: false },
+            },
+          },
+          elements: {
+            line: { borderWidth: 0 },
+            point: { radius: 0, hitRadius: 6, hoverRadius: 4 },
+          },
+          animation: false,
+        };
+        const ds = [{
+          label: metaTitle,
+          data: gains,
+          borderColor: 'rgba(0,0,0,0)',
+          backgroundColor: 'rgba(0,0,0,0)',
+          fill: false,
+        }];
+
+        if (mplOverlayChart) {
+          mplOverlayChart.data.labels = labels;
+          mplOverlayChart.data.datasets = ds;
+          mplOverlayChart.update();
+        } else {
+          mplOverlayChart = new Chart(mplOverlay.getContext('2d'), {
+            type: 'radar',
+            data: { labels, datasets: ds },
+            options: opts,
+          });
+        }
+      };
+      if (mplScenarioSelect) mplScenarioSelect.addEventListener('change', buildMplOverlay);
+      if (freqSelect) freqSelect.addEventListener('change', buildMplOverlay);
+      buildMplOverlay();
     })();
   </script>
 

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 from urllib.parse import quote
 
-from flask import Flask, abort, render_template, request, send_from_directory, Response
+from flask import Flask, abort, render_template, request, send_from_directory, Response, jsonify
 import io
 import base64
 import pandas as pd
@@ -786,6 +786,36 @@ def mpl_polar_png():
 
     png_bytes = _render_polar_png_from_gain(path)
     return Response(png_bytes, mimetype='image/png')
+
+
+@app.route("/mpl_polar_data", methods=["GET"])
+def mpl_polar_data():
+    """Return angle/gain arrays for tooltip overlay (JSON)."""
+    freq = _parse_freq_from_query(FREQ_OPTIONS_GHZ[0])
+    scenario = request.args.get('scenario') or 'optimal'
+
+    path = _resolve_awr_gain_file(freq, scenario)
+    if path is None:
+        abort(404)
+
+    df = pd.read_csv(
+        path,
+        sep=r"\s+",
+        engine="python",
+        header=None,
+        names=["angle_deg", "gain_db"],
+        skiprows=1,
+        decimal='.',
+        dtype={"angle_deg": float, "gain_db": float},
+    ).dropna(subset=["angle_deg", "gain_db"]) 
+
+    angles = df["angle_deg"].astype(float).tolist()
+    gains = df["gain_db"].astype(float).tolist()
+    return jsonify({
+        "angle_deg": angles,
+        "gain_db": gains,
+        "label": "DB(|PPC_TPwr(0,1)|)[*] Rancangan",
+    })
 
 
 @app.route("/radiation-pattern-image/<path:relpath>", methods=["GET"])
