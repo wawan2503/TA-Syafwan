@@ -105,6 +105,29 @@
       </div>
       <div class="card chart-card">
         <div class="card-header">
+          <h2>Pola Radiasi CST (Matplotlib)</h2>
+          <p>Polar plot dihasilkan dari file <code>Polar*.txt</code> (CST) agar tampil identik gaya CST.</p>
+        </div>
+        <div class="chart-filters">
+          <label>
+            <span>Mode data</span>
+            <select id="mplCstScenarioSelect"{% if not cst_chart_data.scenario_options %} disabled{% endif %}>
+              {% if cst_chart_data.scenario_options %}
+                {% for option in cst_chart_data.scenario_options %}
+                  <option value="{{ option.key }}"{% if option.key == cst_chart_data.default_scenario %} selected{% endif %}>{{ option.label }}</option>
+                {% endfor %}
+              {% else %}
+                <option>Data belum tersedia</option>
+              {% endif %}
+            </select>
+          </label>
+        </div>
+        <div class="chart-holder is-image" style="min-height: 420px;">
+          <img id="mplCstPolarImg" class="chart-image" alt="Pola Radiasi CST (Matplotlib)" loading="lazy" />
+        </div>
+      </div>
+      <div class="card chart-card">
+        <div class="card-header">
           <h2>Grafik AWR</h2>
           <p>Data diambil langsung dari folder <code>AWR</code> (optimal &amp; sebelum optimal).</p>
         </div>
@@ -482,6 +505,21 @@
       if (mplScenarioSelect) mplScenarioSelect.addEventListener('change', buildMplOverlay);
       if (freqSelect) freqSelect.addEventListener('change', buildMplOverlay);
       buildMplOverlay();
+
+      // CST Matplotlib polar image (dynamic)
+      const mplCstImg = document.getElementById('mplCstPolarImg');
+      const mplCstScenarioSelect = document.getElementById('mplCstScenarioSelect');
+      const updateMplCstImg = () => {
+        if (!mplCstImg) return;
+        const freq = freqSelect ? (freqSelect.value || '{{ '%.1f'|format(selected_freq) }}') : '{{ '%.1f'|format(selected_freq) }}';
+        const scenario = mplCstScenarioSelect ? (mplCstScenarioSelect.value || (cstDataset?.default_scenario || 'optimal')) : (cstDataset?.default_scenario || 'optimal');
+        const ts = Date.now();
+        mplCstImg.src = `/mpl_cst_polar.png?freq=${encodeURIComponent(freq)}&scenario=${encodeURIComponent(scenario)}&t=${ts}`;
+        mplCstImg.alt = `Pola Radiasi CST (Matplotlib) - ${freq} GHz (${scenario})`;
+      };
+      if (mplCstScenarioSelect) mplCstScenarioSelect.addEventListener('change', updateMplCstImg);
+      if (freqSelect) freqSelect.addEventListener('change', updateMplCstImg);
+      updateMplCstImg();
     })();
   </script>
 

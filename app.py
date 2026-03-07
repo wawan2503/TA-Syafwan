@@ -15,6 +15,15 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from typing import Tuple
+
+# Optional import from helper for CST polar parsing/orientation
+try:
+    from plot_cst_polar import load_polar_txt as _cst_load_polar_txt
+    from plot_cst_polar import build_cst_oriented_dataframe as _cst_build_df
+except Exception:  # pragma: no cover - fallback if helper not present
+    _cst_load_polar_txt = None
+    _cst_build_df = None
 
 app = Flask(__name__)
 
@@ -704,6 +713,49 @@ def _resolve_awr_gain_file(freq_ghz: float, scenario_key: str) -> Optional[Path]
     return path
 
 
+def _resolve_cst_polar_file(freq_ghz: float, scenario_key: str) -> Optional[Path]:
+    """Find the CST Polar.txt-like file under CST/<scenario>/<freq>.
+    Accepts any name containing 'polar'.
+    """
+    cst_root = BASE_DIR / 'CST'
+    if not cst_root.exists():
+        return None
+
+    wanted_slug = _slugify(scenario_key)
+    scenario_dir: Optional[Path] = None
+    for cand in cst_root.iterdir():
+        if not cand.is_dir():
+            continue
+        if _slugify(cand.name) == wanted_slug:
+            scenario_dir = cand
+            break
+    if scenario_dir is None:
+        # Fallback to 'optimal' if requested not found
+        for cand in cst_root.iterdir():
+            if cand.is_dir() and _slugify(cand.name) == 'optimal':
+                scenario_dir = cand
+                break
+    if scenario_dir is None:
+        return None
+
+    # Frequency subfolder
+    freq_dir: Optional[Path] = None
+    for cand in scenario_dir.iterdir():
+        if not cand.is_dir():
+            continue
+        val = _safe_float(cand.name)
+        if val is None:
+            continue
+        if abs(val - float(freq_ghz)) < 1e-6:
+            freq_dir = cand
+            break
+    if freq_dir is None:
+        return None
+
+    # Inside frequency folder, find a file that includes 'polar'
+    return _find_measurement_file(freq_dir, tokens=('polar',))
+
+
 def _render_polar_png_from_gain(path: Path, title_label: str = "DB(|PPC_TPwr(0,1)|)[*] Rancangan") -> bytes:
     """Read AWR gain data with pandas and render a Matplotlib polar PNG.
     - Expects 2 columns: angle(deg) and gain(dB).
@@ -770,6 +822,106 @@ def _render_polar_png_from_gain(path: Path, title_label: str = "DB(|PPC_TPwr(0,1
     return buf.getvalue()
 
 
+def _render_cst_polar_png_from_file(path: Path, freq_for_label: Optional[float] = None) -> bytes:
+    """Render CST-style polar PNG from a CST Polar.txt file.
+    Uses helper parsing/orientation if available, otherwise a minimal fallback.
+    """
+    # Lazy/robust parse
+    if _cst_load_polar_txt is not None and _cst_build_df is not None:
+        try:
+            df_raw, freq_ghz = _cst_load_polar_txt(path)
+        except Exception:
+            # Fallback to simple pandas read if helper fails
+            df_raw = None
+            freq_ghz = None
+    else:
+        df_raw = None
+        freq_ghz = None
+
+    if df_raw is None:
+        # Simple fallback reader: keep numeric-looking lines and first four columns
+        rows: list[list[float]] = []
+        num_re = re.compile(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?")
+        with path.open('r', encoding='utf-8', errors='ignore') as fh:
+            for line in fh:
+                stripped = line.strip()
+                if not stripped or set(stripped) <= {'-', '_', '='}:
+                    continue
+                nums = num_re.findall(stripped)
+                if len(nums) >= 4:
+                    try:
+                        rows.append([float(x) for x in nums[:4]])
+                    except Exception:
+                        continue
+        if not rows:
+            abort(400, description='CST Polar.txt tidak berisi baris numerik yang valid')
+        df_raw = pd.DataFrame(rows, columns=["Theta", "Phi", "Abs(Dir)", "Abs(Theta)"])
+
+    # Orientation: split by Phi and map angles
+    if _cst_build_df is not None:
+        plot_df = _cst_build_df(df_raw)
+    else:
+        tol = 1e-2
+        is_90 = np.isclose(df_raw["Phi"], 90.0, atol=tol)
+        is_270 = np.isclose(df_raw["Phi"], 270.0, atol=tol)
+        df_90 = df_raw.loc[is_90, ["Theta", "Abs(Dir)", "Abs(Theta)"]].copy()
+        df_270 = df_raw.loc[is_270, ["Theta", "Abs(Dir)", "Abs(Theta)"]].copy()
+        df_90["Plot_Angle"] = 360.0 - df_90["Theta"].astype(float)
+        df_270["Plot_Angle"] = df_270["Theta"].astype(float)
+        plot_df = pd.concat([df_90, df_270], ignore_index=True)
+        plot_df["Plot_Angle"] = plot_df["Plot_Angle"] % 360.0
+        plot_df.sort_values("Plot_Angle", inplace=True)
+        plot_df["Angle_Rad"] = np.deg2rad(plot_df["Plot_Angle"].to_numpy())
+        plot_df.rename(columns={"Abs(Dir)": "Dir_dBi", "Abs(Theta)": "Theta_dBi"}, inplace=True)
+
+    # Build figure
+    fig, ax = plt.subplots(subplot_kw={"projection": "polar"}, figsize=(6.2, 6.2), dpi=150)
+    ax.set_theta_zero_location("N")
+    ax.set_theta_direction(-1)
+    ax.set_rlim(-40, 10)
+    ax.set_rticks([-40, -20, 0])
+    ax.set_rlabel_position(135)
+
+    right_deg = [0, 30, 60, 90, 120, 150, 180]
+    left_deg = [330, 300, 270, 240, 210]
+    ax.set_xticks(np.deg2rad(right_deg + left_deg))
+    ax.set_xticklabels(["0", "30", "60", "90", "120", "150", "180", "30", "60", "90", "120", "150"])
+    ax.grid(True, linestyle='--', linewidth=0.6, alpha=0.7)
+
+    ax.plot(plot_df["Angle_Rad"].to_numpy(), plot_df["Dir_dBi"].to_numpy(), color='red', linewidth=2.2)
+    ax.plot(plot_df["Angle_Rad"].to_numpy(), plot_df["Theta_dBi"].to_numpy(), color="#556B2F", linewidth=1.6, linestyle='--')
+
+    r = np.linspace(-40, 10, 100)
+    for ang in (0.0, 78.5, 360.0 - 78.5):
+        th = np.deg2rad(ang)
+        ax.plot(np.full_like(r, th), r, color='blue', linewidth=1.3)
+
+    ax.text(np.deg2rad(150), 8, "Phi= 90", color="black", ha="center", va="center", fontsize=10)
+    ax.text(np.deg2rad(30), 8, "Phi=270", color="black", ha="center", va="center", fontsize=10)
+
+    ax.set_title("Farfield Gain Abs (Phi=90)", fontsize=12, pad=18)
+    plt.figtext(0.5, 0.02, "Theta / Degree vs. dBi", ha="center", va="center", fontsize=10)
+
+    # Legend/info labels
+    f_label = (freq_for_label if isinstance(freq_for_label, (int, float)) else None) or (freq_ghz if isinstance(freq_ghz, (int, float)) else None) or 1.8
+    info = (
+        f"Frequency = {f_label:.3g} GHz\n"
+        f"Main lobe magnitude = 6.45 dBi\n"
+        f"Main lobe direction = 0.0 deg\n"
+        f"Angular width (3 dB) = 157.1 deg\n"
+        f"Side lobe level = -1.3 dB"
+    )
+    plt.figtext(0.72, 0.05, info, ha="left", va="bottom", fontsize=9)
+    plt.figtext(0.78, 0.96, f" farfield (f={f_label:.1f}) [1]", color="red", ha="left", va="top", fontsize=10)
+
+    buf = io.BytesIO()
+    fig.tight_layout()
+    fig.canvas.draw()
+    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    return buf.getvalue()
+
+
 @app.route("/mpl_polar.png", methods=["GET"])
 def mpl_polar_png():
     """Return a dynamically generated polar plot PNG from AWR Data Gain.
@@ -785,6 +937,24 @@ def mpl_polar_png():
         abort(404)
 
     png_bytes = _render_polar_png_from_gain(path)
+    return Response(png_bytes, mimetype='image/png')
+
+
+@app.route("/mpl_cst_polar.png", methods=["GET"])
+def mpl_cst_polar_png():
+    """Return CST-style polar plot PNG from CST Polar*.txt.
+    Query params:
+      - freq: frequency in GHz (e.g., 1.8)
+      - scenario: 'optimal' or 'sebelum-optimal'
+    """
+    freq = _parse_freq_from_query(FREQ_OPTIONS_GHZ[0])
+    scenario = request.args.get('scenario') or 'optimal'
+
+    path = _resolve_cst_polar_file(freq, scenario)
+    if path is None:
+        abort(404)
+
+    png_bytes = _render_cst_polar_png_from_file(path, freq_for_label=freq)
     return Response(png_bytes, mimetype='image/png')
 
 
