@@ -411,17 +411,6 @@ AWR_MEASUREMENT_CONFIG = [
         'file_tokens': ['vswr'],
         'column_indexes': (0, 1),
     },
-    {
-        'key': 'gain',
-        'title': 'Gain dan Pola Radiasi (AWR)',
-        'description': 'Distribusi |PPC TPwr| terhadap sudut (Data Gain*.txt).',
-        'x_label': 'Sudut (deg)',
-        'y_label': 'Gain (dB)',
-        'color': 'rgba(236,72,153,1)',
-        'background': 'rgba(236,72,153,0.15)',
-        'file_tokens': ['gain'],
-        'column_indexes': (0, 1),
-    },
 ]
 
 
@@ -447,17 +436,6 @@ CST_MEASUREMENT_CONFIG = [
         'background': 'rgba(16,185,129,0.15)',
         'file_tokens': ['vswr'],
         'column_indexes': (0, 1),
-    },
-    {
-        'key': 'polar',
-        'title': 'Gain dan Pola Radiasi (CST)',
-        'description': 'Abs(Gain) pada phi = 0 deg dari file Polar *.txt.',
-        'x_label': 'Theta (deg)',
-        'y_label': 'Gain (dBi)',
-        'color': 'rgba(14,165,233,1)',
-        'background': 'rgba(14,165,233,0.15)',
-        'file_tokens': ['polar'],
-        'column_indexes': (0, 2),
     },
 ]
 
@@ -756,6 +734,44 @@ def _resolve_cst_polar_file(freq_ghz: float, scenario_key: str) -> Optional[Path
     return _find_measurement_file(freq_dir, tokens=('polar',))
 
 
+def _parse_float(token: str) -> Optional[float]:
+    try:
+        return float(token.replace(',', '.'))
+    except Exception:
+        return None
+
+
+def _parse_cst_header_metrics(text: str) -> dict:
+    """Extract CST-like header metrics if present.
+    Returns keys (may be None): freq_ghz, main_db, dir_deg, bw3db_deg, sll_db
+    """
+    out = {"freq_ghz": None, "main_db": None, "dir_deg": None, "bw3db_deg": None, "sll_db": None}
+    try:
+        # Frequency
+        m = re.search(r"(?i)\b(?:f|freq(?:uency)?)\s*[:=]\s*([\d,\.]+)\s*GHz\b", text)
+        if m:
+            out["freq_ghz"] = _parse_float(m.group(1))
+        # Main lobe magnitude
+        m = re.search(r"(?i)main\s*lobe\s*magnitude\s*[:=]\s*([-+]?\d*[\.,]?\d+)\s*dB[i]?\b", text)
+        if m:
+            out["main_db"] = _parse_float(m.group(1))
+        # Main lobe direction
+        m = re.search(r"(?i)main\s*lobe\s*direction\s*[:=]\s*([-+]?\d*[\.,]?\d+)\s*deg\b", text)
+        if m:
+            out["dir_deg"] = _parse_float(m.group(1))
+        # Angular width (3 dB)
+        m = re.search(r"(?i)angular\s*width\s*\(\s*3\s*dB\s*\)\s*[:=]\s*([-+]?\d*[\.,]?\d+)\s*deg\b", text)
+        if m:
+            out["bw3db_deg"] = _parse_float(m.group(1))
+        # Side lobe level
+        m = re.search(r"(?i)side\s*lobe\s*level\s*[:=]\s*([-+]?\d*[\.,]?\d+)\s*dB\b", text)
+        if m:
+            out["sll_db"] = _parse_float(m.group(1))
+    except Exception:
+        pass
+    return out
+
+
 def _render_polar_png_from_gain(path: Path, title_label: str = "DB(|PPC_TPwr(0,1)|)[*] Rancangan") -> bytes:
     """Read AWR gain data with pandas and render a Matplotlib polar PNG.
     - Expects 2 columns: angle(deg) and gain(dB).
@@ -826,6 +842,13 @@ def _render_cst_polar_png_from_file(path: Path, freq_for_label: Optional[float] 
     """Render CST-style polar PNG from a CST Polar.txt file.
     Uses helper parsing/orientation if available, otherwise a minimal fallback.
     """
+    # Read whole text for header metrics extraction
+    try:
+        raw_text = path.read_text(encoding='utf-8', errors='ignore')
+    except Exception:
+        raw_text = ''
+    header = _parse_cst_header_metrics(raw_text)
+
     # Lazy/robust parse
     if _cst_load_polar_txt is not None and _cst_build_df is not None:
         try:
@@ -874,6 +897,120 @@ def _render_cst_polar_png_from_file(path: Path, freq_for_label: Optional[float] 
         plot_df["Angle_Rad"] = np.deg2rad(plot_df["Plot_Angle"].to_numpy())
         plot_df.rename(columns={"Abs(Dir)": "Dir_dBi", "Abs(Theta)": "Theta_dBi"}, inplace=True)
 
+    # Compute main-lobe metrics from Abs(Dir)
+    def _compute_polar_metrics(angles_deg_arr: np.ndarray, values_db_arr: np.ndarray) -> tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
+        try:
+            angles = np.asarray(angles_deg_arr, dtype=float)
+            vals = np.asarray(values_db_arr, dtype=float)
+            mask = np.isfinite(angles) & np.isfinite(vals)
+            angles = angles[mask]
+            vals = vals[mask]
+            if angles.size < 4:
+                return None, None, None, None
+            order = np.argsort(angles)
+            angles = angles[order]
+            vals = vals[order]
+
+            n = angles.size
+            ang_ext = np.concatenate([angles - 360.0, angles, angles + 360.0])
+            val_ext = np.concatenate([vals, vals, vals])
+            mid_vals = val_ext[n:2*n]
+            peak_local = int(np.nanargmax(mid_vals))
+            i0 = n + peak_local
+
+            # Parabolic (quadratic) interpolation around peak for sub-degree direction
+            peak_val = float(val_ext[i0])
+            peak_dir = float(angles[peak_local])
+            try:
+                xs = np.array([ang_ext[i0-1], ang_ext[i0], ang_ext[i0+1]], dtype=float)
+                ys = np.array([val_ext[i0-1], val_ext[i0], val_ext[i0+1]], dtype=float)
+                coeff = np.polyfit(xs, ys, 2)  # y = a x^2 + b x + c
+                a, b = coeff[0], coeff[1]
+                if a != 0:
+                    xv = -b / (2*a)
+                    yv = float(np.polyval(coeff, xv))
+                    if np.isfinite(xv) and np.isfinite(yv) and abs(xv - peak_dir) <= 2.0:
+                        peak_dir = float(xv)
+                        peak_val = float(yv)
+            except Exception:
+                pass
+
+            thr = peak_val - 3.0
+
+            # Forward crossing (to the right)
+            right_cross: Optional[float] = None
+            for j in range(i0, i0 + n):
+                v0, v1 = float(val_ext[j]), float(val_ext[j + 1])
+                a0, a1 = float(ang_ext[j]), float(ang_ext[j + 1])
+                if v0 >= thr and v1 < thr:
+                    if v1 == v0:
+                        t = 0.0
+                    else:
+                        t = (thr - v0) / (v1 - v0)
+                    right_cross = a0 + t * (a1 - a0)
+                    break
+
+            # Backward crossing (to the left)
+            left_cross: Optional[float] = None
+            for j in range(i0, i0 - n, -1):
+                v0, v1 = float(val_ext[j]), float(val_ext[j - 1])
+                a0, a1 = float(ang_ext[j]), float(ang_ext[j - 1])
+                if v0 >= thr and v1 < thr:
+                    if v0 == v1:
+                        t = 0.0
+                    else:
+                        t = (thr - v1) / (v0 - v1)
+                    left_cross = a1 + t * (a0 - a1)
+                    break
+
+            beamwidth = None
+            if left_cross is not None and right_cross is not None:
+                beamwidth = float(right_cross - left_cross)
+
+            # Find first nulls (local minima) around main lobe for SLL region
+            left_null: Optional[float] = None
+            right_null: Optional[float] = None
+            # Right side: first local minimum after peak
+            for j in range(i0 + 1, i0 + n - 1):
+                y_prev, y_cur, y_next = float(val_ext[j-1]), float(val_ext[j]), float(val_ext[j+1])
+                if y_cur <= y_prev and y_cur <= y_next:
+                    right_null = float(ang_ext[j])
+                    break
+            # Left side: first local minimum before peak
+            for j in range(i0 - 1, i0 - n + 1, -1):
+                y_prev, y_cur, y_next = float(val_ext[j-1]), float(val_ext[j]), float(val_ext[j+1])
+                if y_cur <= y_prev and y_cur <= y_next:
+                    left_null = float(ang_ext[j])
+                    break
+
+            sll = None
+            left_bound = left_null if left_null is not None else left_cross
+            right_bound = right_null if right_null is not None else right_cross
+            if left_bound is not None and right_bound is not None:
+                left_w = left_bound % 360.0
+                right_w = right_bound % 360.0
+                if left_w <= right_w:
+                    inside = (angles >= left_w) & (angles <= right_w)
+                else:
+                    inside = (angles >= left_w) | (angles <= right_w)
+                outside_vals = vals[~inside]
+                if outside_vals.size:
+                    sll = float(np.max(outside_vals) - peak_val)
+
+            return peak_val, peak_dir, beamwidth, sll
+        except Exception:
+            return None, None, None, None
+
+    # Compute metrics over the combined polar curve (Phi=90 left + Phi=270 right)
+    # using displayed Plot_Angle degrees to match CST-like polar view.
+    all_angles = plot_df["Plot_Angle"].to_numpy()
+    all_values = plot_df["Dir_dBi"].to_numpy()
+    peak_val, peak_dir, beamwidth_3db, sll_rel = _compute_polar_metrics(all_angles, all_values)
+    if isinstance(peak_dir, (int, float)):
+        peak_dir = float(peak_dir) % 360.0
+        if abs(peak_dir - 360.0) < 1e-6 or peak_dir >= 359.999:
+            peak_dir = 0.0
+
     # Build figure
     fig, ax = plt.subplots(subplot_kw={"projection": "polar"}, figsize=(6.2, 6.2), dpi=150)
     ax.set_theta_zero_location("N")
@@ -892,7 +1029,12 @@ def _render_cst_polar_png_from_file(path: Path, freq_for_label: Optional[float] 
     ax.plot(plot_df["Angle_Rad"].to_numpy(), plot_df["Theta_dBi"].to_numpy(), color="#556B2F", linewidth=1.6, linestyle='--')
 
     r = np.linspace(-40, 10, 100)
-    for ang in (0.0, 78.5, 360.0 - 78.5):
+    half_bw = None
+    if isinstance(beamwidth_3db, (int, float)) and math.isfinite(beamwidth_3db):
+        half_bw = max(0.0, float(beamwidth_3db) / 2.0)
+    # Use dynamic half beamwidth if available, else example 78.5°
+    demo_half = half_bw if half_bw is not None else 78.5
+    for ang in (0.0, demo_half, 360.0 - demo_half):
         th = np.deg2rad(ang)
         ax.plot(np.full_like(r, th), r, color='blue', linewidth=1.3)
 
@@ -903,16 +1045,34 @@ def _render_cst_polar_png_from_file(path: Path, freq_for_label: Optional[float] 
     plt.figtext(0.5, 0.02, "Theta / Degree vs. dBi", ha="center", va="center", fontsize=10)
 
     # Legend/info labels
-    f_label = (freq_for_label if isinstance(freq_for_label, (int, float)) else None) or (freq_ghz if isinstance(freq_ghz, (int, float)) else None) or 1.8
+    f_label = (
+        (freq_for_label if isinstance(freq_for_label, (int, float)) else None)
+        or (freq_ghz if isinstance(freq_ghz, (int, float)) else None)
+        or (header.get('freq_ghz') if isinstance(header.get('freq_ghz'), (int, float)) else None)
+        or 1.8
+    )
+    def _fmt(x: Optional[float], fmt: str, fallback: str = "N/A") -> str:
+        return (fmt.format(x) if isinstance(x, (int, float)) and math.isfinite(x) else fallback)
+
+    # Display direction in the same convention as xtick labels
+    dir_calc = None
+    if isinstance(peak_dir, (int, float)) and math.isfinite(peak_dir):
+        dir_calc = peak_dir if peak_dir <= 180.0 else (360.0 - peak_dir)
+    # Use header values if present
+    main_db = header.get('main_db') if isinstance(header.get('main_db'), (int, float)) else peak_val
+    dir_display = header.get('dir_deg') if isinstance(header.get('dir_deg'), (int, float)) else dir_calc
+    bw3db = header.get('bw3db_deg') if isinstance(header.get('bw3db_deg'), (int, float)) else beamwidth_3db
+    sll = header.get('sll_db') if isinstance(header.get('sll_db'), (int, float)) else sll_rel
+
     info = (
         f"Frequency = {f_label:.3g} GHz\n"
-        f"Main lobe magnitude = 6.45 dBi\n"
-        f"Main lobe direction = 0.0 deg\n"
-        f"Angular width (3 dB) = 157.1 deg\n"
-        f"Side lobe level = -1.3 dB"
+        f"Main lobe magnitude = {_fmt(main_db, '{:.2f}')} dBi\n"
+        f"Main lobe direction = {_fmt(dir_display, '{:.1f}')} deg\n"
+        f"Angular width (3 dB) = {_fmt(bw3db, '{:.1f}')} deg\n"
+        f"Side lobe level = {_fmt(sll, '{:.1f}')} dB"
     )
-    plt.figtext(0.72, 0.05, info, ha="left", va="bottom", fontsize=9)
-    plt.figtext(0.78, 0.96, f" farfield (f={f_label:.1f}) [1]", color="red", ha="left", va="top", fontsize=10)
+    plt.figtext(0.76, 0.05, info, ha="left", va="bottom", fontsize=9)
+    plt.figtext(0.83, 0.96, f" farfield (f={f_label:.1f}) [1]", color="red", ha="left", va="top", fontsize=10)
 
     buf = io.BytesIO()
     fig.tight_layout()
@@ -956,6 +1116,65 @@ def mpl_cst_polar_png():
 
     png_bytes = _render_cst_polar_png_from_file(path, freq_for_label=freq)
     return Response(png_bytes, mimetype='image/png')
+
+
+@app.route("/mpl_cst_polar_data", methods=["GET"])
+def mpl_cst_polar_data():
+    """Return angle/gain arrays for CST polar tooltip overlay (JSON)."""
+    freq = _parse_freq_from_query(FREQ_OPTIONS_GHZ[0])
+    scenario = request.args.get('scenario') or 'optimal'
+
+    path = _resolve_cst_polar_file(freq, scenario)
+    if path is None:
+        abort(404)
+
+    # Build oriented dataframe using the same logic as the PNG renderer
+    if _cst_load_polar_txt is not None and _cst_build_df is not None:
+        try:
+            df_raw, _ = _cst_load_polar_txt(path)
+            plot_df = _cst_build_df(df_raw)
+        except Exception:
+            plot_df = None
+    else:
+        plot_df = None
+
+    if plot_df is None:
+        # Fallback light parser
+        rows: list[list[float]] = []
+        num_re = re.compile(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?")
+        with path.open('r', encoding='utf-8', errors='ignore') as fh:
+            for line in fh:
+                stripped = line.strip()
+                if not stripped or set(stripped) <= {'-', '_', '='}:
+                    continue
+                nums = num_re.findall(stripped)
+                if len(nums) >= 4:
+                    try:
+                        rows.append([float(x) for x in nums[:4]])
+                    except Exception:
+                        continue
+        if not rows:
+            abort(400)
+        df_raw = pd.DataFrame(rows, columns=["Theta", "Phi", "Abs(Dir)", "Abs(Theta)"])
+        tol = 1e-2
+        is_90 = np.isclose(df_raw["Phi"], 90.0, atol=tol)
+        is_270 = np.isclose(df_raw["Phi"], 270.0, atol=tol)
+        df_90 = df_raw.loc[is_90, ["Theta", "Abs(Dir)"]].copy()
+        df_270 = df_raw.loc[is_270, ["Theta", "Abs(Dir)"]].copy()
+        df_90["Plot_Angle"] = 360.0 - df_90["Theta"].astype(float)
+        df_270["Plot_Angle"] = df_270["Theta"].astype(float)
+        plot_df = pd.concat([df_90, df_270], ignore_index=True)
+        plot_df["Plot_Angle"] = plot_df["Plot_Angle"] % 360.0
+        plot_df.sort_values("Plot_Angle", inplace=True)
+        plot_df.rename(columns={"Abs(Dir)": "Dir_dBi"}, inplace=True)
+
+    angles = plot_df["Plot_Angle"].astype(float).tolist()
+    gains = plot_df["Dir_dBi"].astype(float).tolist()
+    return jsonify({
+        "angle_deg": angles,
+        "gain_db": gains,
+        "label": "Abs(Dir) (CST)",
+    })
 
 
 @app.route("/mpl_polar_data", methods=["GET"])
